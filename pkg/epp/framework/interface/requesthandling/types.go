@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -103,19 +104,47 @@ type InferenceRequestBody struct {
 // It is consumed by scheduling and request-control plugins that benefit from
 // actual token data such as prefix-cache awareness.
 type TokenizedPrompt struct {
-	// TokenIDs are the token IDs for the prompt, including multimodal placeholder tokens.
-	// For multi-prompt completions this is the concatenation of all per-prompt tokens.
-	TokenIDs []uint32
-	// PerPromptTokens holds the token IDs for each individual prompt string.
-	// Set only when the request carries a []string prompt with more than one element.
-	// Consumers that need per-prompt granularity (e.g. prefix-cache scoring) use
-	// this field; all others use the flat TokenIDs.
+	// PerPromptTokens holds the token IDs for each prompt in the request.
+	// Single-prompt requests (chat, generate, single-string completions) use a
+	// length-1 outer slice. Multi-string completions use one inner slice per
+	// prompt string. Consumers that need the flat concatenation should call
+	// FlatTokenIDs(); consumers that only need the count should call TokenCount().
 	PerPromptTokens [][]uint32
 	// MultiModalFeatures holds one entry per multimodal item in prompt order.
-	// Nil if the prompt contains no multimodal content.
+	// Nil if the prompt contains no multimodal content. Offsets are relative
+	// to FlatTokenIDs() (always single-prompt when multimodal content is present).
 	MultiModalFeatures []MultiModalFeature
 	// CacheSalt isolates prefix caches across requests. Populated by the token-producer.
 	CacheSalt string
+}
+
+// TokenCount returns the total number of tokens across all prompts.
+func (tp *TokenizedPrompt) TokenCount() int {
+	if tp == nil {
+		return 0
+	}
+	n := 0
+	for _, pp := range tp.PerPromptTokens {
+		n += len(pp)
+	}
+	return n
+}
+
+// FlatTokenIDs returns all tokens as a single slice. For single-prompt
+// requests (the common case) it returns the inner slice directly with no
+// allocation. For multi-prompt requests it concatenates.
+func (tp *TokenizedPrompt) FlatTokenIDs() []uint32 {
+	if tp == nil {
+		return nil
+	}
+	switch len(tp.PerPromptTokens) {
+	case 0:
+		return nil
+	case 1:
+		return tp.PerPromptTokens[0]
+	default:
+		return slices.Concat(tp.PerPromptTokens...)
+	}
 }
 
 // MultiModalFeature holds all data needed for prefix-cache scoring of a single

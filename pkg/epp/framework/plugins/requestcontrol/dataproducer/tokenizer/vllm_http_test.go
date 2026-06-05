@@ -97,7 +97,7 @@ func TestProduce_CompletionsVLLMHTTPUsesRawPayload(t *testing.T) {
 	p := newTestPlugin(newHTTPRenderer(t, srv))
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, []uint32{4, 5}, req.Body.TokenizedPrompt.TokenIDs)
+	assert.Equal(t, []uint32{4, 5}, req.Body.TokenizedPrompt.FlatTokenIDs())
 
 	var sent map[string]any
 	require.NoError(t, json.Unmarshal(cap.completions, &sent))
@@ -230,7 +230,7 @@ func TestProduce_ChatCompletionsVLLMHTTPUsesRawPayload(t *testing.T) {
 	p := newTestPlugin(newHTTPRenderer(t, srv))
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, []uint32{9, 10}, req.Body.TokenizedPrompt.TokenIDs)
+	assert.Equal(t, []uint32{9, 10}, req.Body.TokenizedPrompt.FlatTokenIDs())
 
 	var sent map[string]any
 	require.NoError(t, json.Unmarshal(cap.chat, &sent))

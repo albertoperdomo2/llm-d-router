@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -109,7 +108,7 @@ func (b renderBackend) produce(ctx context.Context, body *fwkrh.InferenceRequest
 	switch {
 	case body.Completions != nil:
 		if ids := body.Completions.Prompt.TokenIDs; len(ids) > 0 {
-			return &fwkrh.TokenizedPrompt{TokenIDs: ids}, nil
+			return &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{ids}}, nil
 		}
 		return b.renderCompletions(ctx, body)
 	case body.ChatCompletions != nil:
@@ -117,10 +116,10 @@ func (b renderBackend) produce(ctx context.Context, body *fwkrh.InferenceRequest
 		if err != nil {
 			return nil, fmt.Errorf("tokenization failed: %w", err)
 		}
-		return &fwkrh.TokenizedPrompt{TokenIDs: tokenIDs, MultiModalFeatures: convertMMFeaturesToUpstream(mmFeatures)}, nil
+		return &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{tokenIDs}, MultiModalFeatures: convertMMFeaturesToUpstream(mmFeatures)}, nil
 	case body.Generate != nil:
 		return &fwkrh.TokenizedPrompt{
-			TokenIDs:           body.Generate.TokenIDs,
+			PerPromptTokens:    [][]uint32{body.Generate.TokenIDs},
 			MultiModalFeatures: convertMMFeaturesToUpstream(body.Generate.Features),
 		}, nil
 	default:
@@ -189,7 +188,7 @@ func (b renderBackend) renderCompletions(ctx context.Context, body *fwkrh.Infere
 		if err != nil {
 			return nil, fmt.Errorf("tokenization failed: %w", err)
 		}
-		return &fwkrh.TokenizedPrompt{TokenIDs: tokenIDs}, nil
+		return &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{tokenIDs}}, nil
 	}
 
 	allTokenIDs := make([][]uint32, 0, len(prompt.Strings))
@@ -200,12 +199,5 @@ func (b renderBackend) renderCompletions(ctx context.Context, body *fwkrh.Infere
 		}
 		allTokenIDs = append(allTokenIDs, ids)
 	}
-	flat := slices.Concat(allTokenIDs...)
-	if len(flat) == 0 {
-		return &fwkrh.TokenizedPrompt{}, nil
-	}
-	return &fwkrh.TokenizedPrompt{
-		TokenIDs:        flat,
-		PerPromptTokens: allTokenIDs,
-	}, nil
+	return &fwkrh.TokenizedPrompt{PerPromptTokens: allTokenIDs}, nil
 }

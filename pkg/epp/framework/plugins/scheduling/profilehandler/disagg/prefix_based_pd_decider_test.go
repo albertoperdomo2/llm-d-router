@@ -67,7 +67,7 @@ func withTokens(req *scheduling.InferenceRequest, n int) *scheduling.InferenceRe
 	if req.Body.TokenizedPrompt == nil {
 		req.Body.TokenizedPrompt = &fwkrh.TokenizedPrompt{}
 	}
-	req.Body.TokenizedPrompt.TokenIDs = make([]uint32, n)
+	req.Body.TokenizedPrompt.PerPromptTokens = [][]uint32{make([]uint32, n)}
 	return req
 }
 
@@ -118,7 +118,7 @@ func TestGetUserInputLenInTokens(t *testing.T) {
 							Strings: []string{"hello world", "foo bar baz"},
 						},
 					},
-					TokenizedPrompt: &fwkrh.TokenizedPrompt{TokenIDs: make([]uint32, 5)},
+					TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{make([]uint32, 5)}},
 				},
 			},
 			want: 5,
@@ -161,7 +161,7 @@ func TestGetUserInputLenInTokens(t *testing.T) {
 			req: &scheduling.InferenceRequest{
 				Body: &fwkrh.InferenceRequestBody{
 					Generate:        &fwkrh.GenerateRequest{TokenIDs: []uint32{1, 2, 3, 4, 5, 6, 7}},
-					TokenizedPrompt: &fwkrh.TokenizedPrompt{TokenIDs: make([]uint32, 7)},
+					TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{make([]uint32, 7)}},
 				},
 			},
 			want: 7,

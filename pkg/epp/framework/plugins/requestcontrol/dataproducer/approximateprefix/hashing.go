@@ -57,12 +57,12 @@ func getBlockHashes(ctx context.Context, request *scheduling.InferenceRequest, b
 	}
 
 	tp := request.Body.TokenizedPrompt
-	if tp == nil || len(tp.TokenIDs) == 0 {
+	if tp == nil || tp.TokenCount() == 0 {
 		loggerDebug.Info("TokenizedPrompt is empty, skipping hashing")
 		return nil
 	}
 
-	seq := getKVCacheBlocksFromTokens(tp.TokenIDs, blockSizeTokens)
+	seq := getKVCacheBlocksFromTokens(tp.FlatTokenIDs(), blockSizeTokens)
 
 	blockHashes := computeBlockHashes(seq, request, maxPrefixBlocks)
 	if len(blockHashes) == 0 {

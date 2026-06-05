@@ -52,7 +52,7 @@ func disableMinBlockSizeClamp(t *testing.T) {
 // tokenizedBody returns a request body carrying only a tokenized prompt.
 func tokenizedBody(tokenIDs []uint32) *fwkrh.InferenceRequestBody {
 	return &fwkrh.InferenceRequestBody{
-		TokenizedPrompt: &fwkrh.TokenizedPrompt{TokenIDs: tokenIDs},
+		TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{tokenIDs}},
 	}
 }
 

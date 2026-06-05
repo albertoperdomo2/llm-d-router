@@ -46,43 +46,31 @@ func computeBlockKeys(ctx context.Context, idx kvCacheIndexer,
 		return nil, nil
 	}
 	tp := request.Body.TokenizedPrompt
-	if tp == nil {
+	if tp == nil || len(tp.PerPromptTokens) == 0 {
 		return nil, nil
 	}
 
-	// Multi-prompt: score each prompt independently.
-	if len(tp.PerPromptTokens) > 1 {
-		var result [][]kvblock.BlockHash
-		for _, tokens := range tp.PerPromptTokens {
-			if len(tokens) == 0 {
-				continue
-			}
-			// MM features are nil: multi-prompt completions don't carry multimodal content.
-			keys, err := computeBlockKeysForTokens(ctx, idx, tokens, nil, tp.CacheSalt, request.TargetModel, blockSizeTokens)
-			if err != nil {
-				return nil, err
-			}
-			if len(keys) == 0 {
-				continue
-			}
-			result = append(result, keys)
+	var result [][]kvblock.BlockHash
+	for _, tokens := range tp.PerPromptTokens {
+		if len(tokens) == 0 {
+			continue
 		}
-		return result, nil
+		// MM features apply only to single-prompt requests (chat); multi-prompt
+		// completions never carry multimodal content.
+		var mmf []fwkrh.MultiModalFeature
+		if len(tp.PerPromptTokens) == 1 {
+			mmf = tp.MultiModalFeatures
+		}
+		keys, err := computeBlockKeysForTokens(ctx, idx, tokens, mmf, tp.CacheSalt, request.TargetModel, blockSizeTokens)
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		result = append(result, keys)
 	}
-
-	// Single prompt.
-	if len(tp.TokenIDs) == 0 {
-		return nil, nil
-	}
-	tokens := tp.TokenIDs
-	keys, err := computeBlockKeysForTokens(ctx, idx, tokens, tp.MultiModalFeatures, tp.CacheSalt, request.TargetModel, blockSizeTokens)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	return [][]kvblock.BlockHash{keys}, nil
+	return result, nil
 }
 
 func computeBlockKeysForTokens(ctx context.Context, idx kvCacheIndexer,

@@ -87,7 +87,7 @@ func TestGetBlockHashes(t *testing.T) {
 			request: &fwksched.InferenceRequest{
 				Body: &fwkrh.InferenceRequestBody{
 					TokenizedPrompt: &fwkrh.TokenizedPrompt{
-						TokenIDs: []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+						PerPromptTokens: [][]uint32{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
 					},
 				},
 			},
@@ -132,8 +132,8 @@ func TestGetBlockHashesCacheSalt(t *testing.T) {
 	body := func(salt string) *fwkrh.InferenceRequestBody {
 		return &fwkrh.InferenceRequestBody{
 			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				TokenIDs:  []uint32{1, 2, 3, 4},
-				CacheSalt: salt,
+				PerPromptTokens: [][]uint32{{1, 2, 3, 4}},
+				CacheSalt:       salt,
 			},
 		}
 	}

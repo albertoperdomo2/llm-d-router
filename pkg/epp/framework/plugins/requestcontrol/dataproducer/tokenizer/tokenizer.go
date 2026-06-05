@@ -261,11 +261,10 @@ func (p *Plugin) Produce(ctx context.Context, request *scheduling.InferenceReque
 	if err != nil {
 		return err
 	}
-	tp.CacheSalt = CacheSaltFromBody(request.Body)
-
-	if tp == nil || len(tp.TokenIDs) == 0 {
+	if tp == nil || tp.TokenCount() == 0 {
 		return nil
 	}
+	tp.CacheSalt = CacheSaltFromBody(request.Body)
 	request.Body.TokenizedPrompt = tp
 	return nil
 }
