@@ -262,5 +262,5 @@ func TestLegacyProducer_KeepsExistingTokenizedPrompt(t *testing.T) {
 	require.NoError(t, lp.Produce(ctx, req, nil))
 
 	assert.Equal(t, 0, stub.calls, "pool must not be called when tokens already present")
-	assert.Equal(t, []uint32{5, 5, 5}, req.Body.TokenizedPrompt.FlatTokenIDs())
+	assert.Equal(t, []uint32{5, 5, 5}, req.Body.TokenizedPrompt.PerPromptTokens[0])
 }

@@ -166,7 +166,7 @@ func TestProduce_PopulatesTokenizedPrompt(t *testing.T) {
 	}
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, []uint32{1, 2, 3, 4}, req.Body.TokenizedPrompt.FlatTokenIDs())
+	assert.Equal(t, []uint32{1, 2, 3, 4}, req.Body.TokenizedPrompt.PerPromptTokens[0])
 	require.Len(t, req.Body.TokenizedPrompt.MultiModalFeatures, 2)
 
 	assert.Equal(t, 3, req.Body.TokenizedPrompt.MultiModalFeatures[0].Offset)
@@ -204,7 +204,7 @@ func TestProduce_SetsCacheSaltOnSkipPath(t *testing.T) {
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	assert.Same(t, existing, req.Body.TokenizedPrompt)
 	assert.Equal(t, "tenant-x", req.Body.TokenizedPrompt.CacheSalt)
-	assert.Equal(t, []uint32{1, 2, 3}, req.Body.TokenizedPrompt.FlatTokenIDs())
+	assert.Equal(t, []uint32{1, 2, 3}, req.Body.TokenizedPrompt.PerPromptTokens[0])
 }
 
 func TestRenderBackend_CompletionsTokenIDsPassthrough(t *testing.T) {
@@ -218,7 +218,7 @@ func TestRenderBackend_CompletionsTokenIDsPassthrough(t *testing.T) {
 		Completions: &fwkrh.CompletionsRequest{Prompt: fwkrh.Prompt{TokenIDs: []uint32{5, 6, 7}}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []uint32{5, 6, 7}, tp.FlatTokenIDs())
+	assert.Equal(t, []uint32{5, 6, 7}, tp.PerPromptTokens[0])
 }
 
 func TestRenderBackend_CompletionsArrayRendersPerPrompt(t *testing.T) {
@@ -237,7 +237,6 @@ func TestRenderBackend_CompletionsArrayRendersPerPrompt(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"alpha", "beta"}, prompts)
-	assert.Equal(t, []uint32{1, 1}, tp.FlatTokenIDs())
 	assert.Equal(t, [][]uint32{{1}, {1}}, tp.PerPromptTokens)
 }
 
@@ -256,7 +255,6 @@ func TestRenderBackend_CompletionsSingleArrayUsesPlainText(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "alpha beta", got)
-	assert.Equal(t, []uint32{1}, tp.FlatTokenIDs())
 	assert.Equal(t, [][]uint32{{1}}, tp.PerPromptTokens)
 }
 
@@ -327,7 +325,7 @@ func TestProduce_GenerateUsesPreTokenizedIDs(t *testing.T) {
 
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, tokenIDs, req.Body.TokenizedPrompt.FlatTokenIDs())
+	assert.Equal(t, tokenIDs, req.Body.TokenizedPrompt.PerPromptTokens[0])
 	assert.Nil(t, req.Body.TokenizedPrompt.MultiModalFeatures)
 }
 
@@ -368,7 +366,7 @@ func TestProduce_GenerateFlattensFeatures(t *testing.T) {
 
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, tokenIDs, req.Body.TokenizedPrompt.FlatTokenIDs())
+	assert.Equal(t, tokenIDs, req.Body.TokenizedPrompt.PerPromptTokens[0])
 	assert.Equal(t,
 		[]fwkrh.MultiModalFeature{
 			{Modality: fwkrh.ModalityImage, Hash: "abc123hash", Offset: 1, Length: 3},
@@ -470,7 +468,6 @@ func TestProduce_StringArrayPrompt(t *testing.T) {
 	}
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, []uint32{10, 20, 30, 40, 50}, req.Body.TokenizedPrompt.FlatTokenIDs())
 	require.Len(t, req.Body.TokenizedPrompt.PerPromptTokens, 2)
 	assert.Equal(t, []uint32{10, 20, 30}, req.Body.TokenizedPrompt.PerPromptTokens[0])
 	assert.Equal(t, []uint32{40, 50}, req.Body.TokenizedPrompt.PerPromptTokens[1])
@@ -541,7 +538,6 @@ func TestProduce_SinglePromptSetsPerPromptTokens(t *testing.T) {
 	}
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	assert.Equal(t, []uint32{10, 20, 30}, req.Body.TokenizedPrompt.FlatTokenIDs())
 	assert.Equal(t, [][]uint32{{10, 20, 30}}, req.Body.TokenizedPrompt.PerPromptTokens)
 }
 

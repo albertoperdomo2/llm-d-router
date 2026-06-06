@@ -62,7 +62,15 @@ func getBlockHashes(ctx context.Context, request *scheduling.InferenceRequest, b
 		return nil
 	}
 
-	seq := getKVCacheBlocksFromTokens(tp.FlatTokenIDs(), blockSizeTokens)
+	seq := func(yield func(HashBlock) bool) {
+		for _, tokens := range tp.PerPromptTokens {
+			for block := range getKVCacheBlocksFromTokens(tokens, blockSizeTokens) {
+				if !yield(block) {
+					return
+				}
+			}
+		}
+	}
 
 	blockHashes := computeBlockHashes(seq, request, maxPrefixBlocks)
 	if len(blockHashes) == 0 {

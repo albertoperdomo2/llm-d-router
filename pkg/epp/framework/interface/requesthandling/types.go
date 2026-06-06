@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"strings"
 
@@ -107,12 +106,12 @@ type TokenizedPrompt struct {
 	// PerPromptTokens holds the token IDs for each prompt in the request.
 	// Single-prompt requests (chat, generate, single-string completions) use a
 	// length-1 outer slice. Multi-string completions use one inner slice per
-	// prompt string. Consumers that need the flat concatenation should call
-	// FlatTokenIDs(); consumers that only need the count should call TokenCount().
+	// prompt string.
 	PerPromptTokens [][]uint32
 	// MultiModalFeatures holds one entry per multimodal item in prompt order.
 	// Nil if the prompt contains no multimodal content. Offsets are relative
-	// to FlatTokenIDs() (always single-prompt when multimodal content is present).
+	// to PerPromptTokens[0] (always single-prompt when multimodal content is
+	// present).
 	MultiModalFeatures []MultiModalFeature
 	// CacheSalt isolates prefix caches across requests. Populated by the token-producer.
 	CacheSalt string
@@ -128,23 +127,6 @@ func (tp *TokenizedPrompt) TokenCount() int {
 		n += len(pp)
 	}
 	return n
-}
-
-// FlatTokenIDs returns all tokens as a single slice. For single-prompt
-// requests (the common case) it returns the inner slice directly with no
-// allocation. For multi-prompt requests it concatenates.
-func (tp *TokenizedPrompt) FlatTokenIDs() []uint32 {
-	if tp == nil {
-		return nil
-	}
-	switch len(tp.PerPromptTokens) {
-	case 0:
-		return nil
-	case 1:
-		return tp.PerPromptTokens[0]
-	default:
-		return slices.Concat(tp.PerPromptTokens...)
-	}
 }
 
 // MultiModalFeature holds all data needed for prefix-cache scoring of a single
