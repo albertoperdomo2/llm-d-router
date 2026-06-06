@@ -19,7 +19,6 @@ package preciseprefixcache
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -43,8 +42,8 @@ var _ requestcontrol.PreRequest = &Producer{}
 // speculativeEntries records the speculative rows added on a routing decision
 // so the TTL-eviction callback can roll them back.
 type speculativeEntries struct {
-	blockKeys  []kvblock.BlockHash
-	podEntries []kvblock.PodEntry
+	perPromptKeys [][]kvblock.BlockHash
+	podEntries    []kvblock.PodEntry
 }
 
 // blockKeysState carries the block keys computed in Produce to PreRequest
@@ -96,11 +95,11 @@ func buildSpeculativeCache(ctx context.Context, config PluginConfig,
 			return
 		}
 		entries := item.Value()
-		for _, reqKey := range entries.blockKeys {
-			// Speculative entries were added without engineKey mapping, so
-			// evict by RequestKey directly.
-			//nolint:errcheck // best-effort cleanup on TTL expiry
-			index.Evict(ctx, reqKey, kvblock.RequestKey, entries.podEntries)
+		for _, promptKeys := range entries.perPromptKeys {
+			for _, reqKey := range promptKeys {
+				//nolint:errcheck // best-effort cleanup on TTL expiry
+				index.Evict(ctx, reqKey, kvblock.RequestKey, entries.podEntries)
+			}
 		}
 	})
 	go cache.Start()
@@ -135,8 +134,14 @@ func (p *Producer) PreRequest(ctx context.Context,
 	}
 	p.pluginState.Delete(request.RequestID)
 
-	allBlockKeys := slices.Concat(state.perPromptKeys...)
-	if len(allBlockKeys) == 0 {
+	hasKeys := false
+	for _, pk := range state.perPromptKeys {
+		if len(pk) > 0 {
+			hasKeys = true
+			break
+		}
+	}
+	if !hasKeys {
 		return
 	}
 
@@ -183,13 +188,13 @@ func (p *Producer) PreRequest(ctx context.Context,
 	}
 
 	p.speculativeCache.Set(request.RequestID, &speculativeEntries{
-		blockKeys:  allBlockKeys,
-		podEntries: allPodEntries,
+		perPromptKeys: state.perPromptKeys,
+		podEntries:    allPodEntries,
 	}, p.speculativeTTL)
 
 	logger.V(logging.TRACE).Info("Added speculative entries",
 		"requestID", request.RequestID,
 		"pod", speculativePod.PodIdentifier,
-		"blockKeys", len(allBlockKeys),
+		"prompts", len(state.perPromptKeys),
 		"ttl", p.speculativeTTL)
 }

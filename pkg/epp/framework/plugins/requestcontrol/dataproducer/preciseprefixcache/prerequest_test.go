@@ -88,7 +88,7 @@ func TestPreRequest_SeedsSpeculativeForPrimary(t *testing.T) {
 
 	cached := p.speculativeCache.Get(req.RequestID)
 	require.NotNil(t, cached)
-	assert.Equal(t, blockKeys, cached.Value().blockKeys)
+	assert.Equal(t, [][]kvblock.BlockHash{blockKeys}, cached.Value().perPromptKeys)
 	require.Len(t, cached.Value().podEntries, 1)
 	assert.Equal(t, "10.0.0.1:8080", cached.Value().podEntries[0].PodIdentifier)
 }
