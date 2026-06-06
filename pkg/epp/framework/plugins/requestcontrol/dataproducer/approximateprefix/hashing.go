@@ -45,11 +45,13 @@ func (b HashBlock) Hash() uint64 {
 	return 0
 }
 
-// getBlockHashes divides the tokenized prompt into blocks and calculates a prefix cache hash for each block.
-// The first block hash includes the model name and cache salt (if provided).
+// getBlockHashes divides the tokenized prompt into blocks and calculates a
+// prefix cache hash for each block. Each prompt in PerPromptTokens is hashed
+// independently so cross-prompt block adjacency is avoided. The first block
+// hash of every prompt includes the model name and cache salt (if provided).
 // For subsequent blocks, the hash is calculated as: hash(block i content, hash(i-1)).
 // It requires request.Body.TokenizedPrompt to be populated by a token-producer backend.
-func getBlockHashes(ctx context.Context, request *scheduling.InferenceRequest, blockSizeTokens int, maxPrefixBlocks int) []blockHash {
+func getBlockHashes(ctx context.Context, request *scheduling.InferenceRequest, blockSizeTokens int, maxPrefixBlocks int) [][]blockHash {
 	loggerDebug := log.FromContext(ctx).V(logutil.DEBUG)
 	if request == nil || request.Body == nil {
 		loggerDebug.Info("Request or request data is nil, skipping hashing")
@@ -62,23 +64,19 @@ func getBlockHashes(ctx context.Context, request *scheduling.InferenceRequest, b
 		return nil
 	}
 
-	seq := func(yield func(HashBlock) bool) {
-		for _, tokens := range tp.PerPromptTokens {
-			for block := range getKVCacheBlocksFromTokens(tokens, blockSizeTokens) {
-				if !yield(block) {
-					return
-				}
-			}
+	var result [][]blockHash
+	for _, tokens := range tp.PerPromptTokens {
+		seq := getKVCacheBlocksFromTokens(tokens, blockSizeTokens)
+		hashes := computeBlockHashes(seq, request, maxPrefixBlocks)
+		if len(hashes) > 0 {
+			result = append(result, hashes)
 		}
 	}
-
-	blockHashes := computeBlockHashes(seq, request, maxPrefixBlocks)
-	if len(blockHashes) == 0 {
+	if len(result) == 0 {
 		loggerDebug.Info("No kv cache block found")
 		return nil
 	}
-
-	return blockHashes
+	return result
 }
 
 // computeBlockHashes calculates the hash for content blocks.

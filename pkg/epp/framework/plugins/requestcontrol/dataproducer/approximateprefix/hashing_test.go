@@ -122,8 +122,12 @@ func TestGetBlockHashes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hashes := getBlockHashes(context.Background(), tt.request, tt.blockSizeTokens, defaultMaxPrefixBlocks)
-			assert.Equal(t, tt.expectedBlocks, len(hashes))
+			perPromptHashes := getBlockHashes(context.Background(), tt.request, tt.blockSizeTokens, defaultMaxPrefixBlocks)
+			totalBlocks := 0
+			for _, ph := range perPromptHashes {
+				totalBlocks += len(ph)
+			}
+			assert.Equal(t, tt.expectedBlocks, totalBlocks)
 		})
 	}
 }

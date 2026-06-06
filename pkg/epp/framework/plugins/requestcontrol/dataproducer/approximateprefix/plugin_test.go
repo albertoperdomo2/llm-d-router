@@ -88,7 +88,7 @@ func TestProduce(t *testing.T) {
 	state, err := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req1.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 	assert.NoError(t, err)
 	assert.NotNil(t, state)
-	assert.Equal(t, 2, len(state.PrefixHashes)) // 2 token IDs at blockSize 1 -> 2 blocks
+	assert.Equal(t, 2, len(state.PerPromptHashes[0])) // 2 token IDs at blockSize 1 -> 2 blocks
 
 	// Verify pod match info was set (should be 0 match since indexer is empty)
 	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
@@ -138,10 +138,12 @@ func TestPreRequest(t *testing.T) {
 		p.wg.Wait()
 
 		// 4. Verify indexer was updated
-		hashes := getBlockHashes(context.Background(), req1, config.BlockSizeTokens, defaultMaxPrefixBlocks)
-		for _, hash := range hashes {
-			pods := p.indexer().Get(hash)
-			assert.Contains(t, pods, ServerID(endpoint1.GetMetadata().NamespacedName))
+		perPromptHashes := getBlockHashes(context.Background(), req1, config.BlockSizeTokens, defaultMaxPrefixBlocks)
+		for _, promptHashes := range perPromptHashes {
+			for _, hash := range promptHashes {
+				pods := p.indexer().Get(hash)
+				assert.Contains(t, pods, ServerID(endpoint1.GetMetadata().NamespacedName))
+			}
 		}
 	})
 
@@ -180,8 +182,8 @@ func TestPreRequest(t *testing.T) {
 			p.PreRequest(context.Background(), req, res)
 			p.wg.Wait()
 
-			hashes := getBlockHashes(context.Background(), req, config.BlockSizeTokens, defaultMaxPrefixBlocks)
-			allHashes = append(allHashes, hashes)
+			perPromptHashes := getBlockHashes(context.Background(), req, config.BlockSizeTokens, defaultMaxPrefixBlocks)
+			allHashes = append(allHashes, perPromptHashes[0])
 		}
 
 		// Since capacity is 2, the first request's hash should have been evicted.
@@ -245,7 +247,7 @@ func TestPrefixPluginPartialPrefixMatch(t *testing.T) {
 	}
 	_ = p.Produce(context.Background(), req1, endpoints)
 	state, _ := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req1.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
-	assert.Equal(t, 2, len(state.PrefixHashes))
+	assert.Equal(t, 2, len(state.PerPromptHashes[0]))
 
 	// Simulate pod1 was picked and pod3 was picked as a prefill node.
 	schedulingResult := &fwksched.SchedulingResult{
@@ -305,7 +307,7 @@ func TestPrefixPluginPrefixGrowth(t *testing.T) {
 	}
 	_ = p.Produce(context.Background(), req1, endpoints)
 	state1, _ := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req1.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
-	initialHashCount := len(state1.PrefixHashes)
+	initialHashCount := len(state1.PerPromptHashes[0])
 	assert.Greater(t, initialHashCount, 0)
 
 	// Simulate pod1 was picked
@@ -326,7 +328,7 @@ func TestPrefixPluginPrefixGrowth(t *testing.T) {
 	}
 	_ = p.Produce(context.Background(), req2, endpoints)
 	state2, _ := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req2.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
-	extendedHashCount := len(state2.PrefixHashes)
+	extendedHashCount := len(state2.PerPromptHashes[0])
 	assert.Greater(t, extendedHashCount, initialHashCount)
 
 	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
@@ -370,7 +372,7 @@ func TestPrefixPluginAutoTune(t *testing.T) {
 	_ = p.Produce(context.Background(), req, endpoints)
 	state, _ := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 	// 192 tokens / 128 tokens per block = 2 blocks.
-	assert.Equal(t, 2, len(state.PrefixHashes), "Should use pod block size (128 tokens) -> 2 blocks")
+	assert.Equal(t, 2, len(state.PerPromptHashes[0]), "Should use pod block size (128 tokens) -> 2 blocks")
 
 	schedulingResult := &fwksched.SchedulingResult{
 		PrimaryProfileName: "default",
@@ -414,7 +416,7 @@ func TestMaxPrefixTokensToMatch(t *testing.T) {
 
 	state, err := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 	assert.NoError(t, err)
-	assert.Equal(t, 2, len(state.PrefixHashes), "should cap at MaxPrefixTokensToMatch/BlockSizeTokens = 2 blocks")
+	assert.Equal(t, 2, len(state.PerPromptHashes[0]), "should cap at MaxPrefixTokensToMatch/BlockSizeTokens = 2 blocks")
 
 	// When MaxPrefixTokensToMatch is 0 (unset), fall back to MaxPrefixBlocksToMatch.
 	cfg2 := config{
@@ -437,7 +439,7 @@ func TestMaxPrefixTokensToMatch(t *testing.T) {
 
 	state2, err := plugin.ReadPluginStateKey[*SchedulingContextState](p2.PluginState(), req2.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 	assert.NoError(t, err)
-	assert.Equal(t, 3, len(state2.PrefixHashes), "should fall back to MaxPrefixBlocksToMatch when MaxPrefixTokensToMatch is 0")
+	assert.Equal(t, 3, len(state2.PerPromptHashes[0]), "should fall back to MaxPrefixBlocksToMatch when MaxPrefixTokensToMatch is 0")
 }
 
 // TestGetBlockSize_AutotuneClampsBelowMinimum verifies that when AutoTune is on and
@@ -635,7 +637,7 @@ func TestPrefixPluginTokenizedRequest(t *testing.T) {
 	state, err := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 	assert.NoError(t, err)
 	assert.NotNil(t, state)
-	assert.Equal(t, 4, len(state.PrefixHashes))
+	assert.Equal(t, 4, len(state.PerPromptHashes[0]))
 
 	// Verify match info was set on the endpoint (0 match since indexer is empty).
 	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
@@ -679,5 +681,5 @@ func TestPrefixPluginMatchesSameTokens(t *testing.T) {
 	_ = p.Produce(context.Background(), req2, endpoints)
 	state2, _ := plugin.ReadPluginStateKey[*SchedulingContextState](p.PluginState(), req2.RequestID, plugin.StateKey(ApproxPrefixCachePluginType))
 
-	assert.Equal(t, state1.PrefixHashes, state2.PrefixHashes, "identical token IDs must produce identical hashes")
+	assert.Equal(t, state1.PerPromptHashes, state2.PerPromptHashes, "identical token IDs must produce identical hashes")
 }
