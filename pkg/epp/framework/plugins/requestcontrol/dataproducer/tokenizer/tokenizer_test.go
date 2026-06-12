@@ -221,23 +221,22 @@ func TestRenderBackend_CompletionsTokenIDsPassthrough(t *testing.T) {
 	assert.Equal(t, []uint32{5, 6, 7}, tp.PerPromptTokens[0])
 }
 
-func TestRenderBackend_CompletionsArrayRendersPerPrompt(t *testing.T) {
-	var prompts []string
+func TestRenderBackend_CompletionsArrayPassesArrayPayload(t *testing.T) {
 	tok := &mockTokenizer{
 		renderFunc: func(payload fwkrh.RequestPayload) ([]uint32, []tokenizerTypes.Offset, error) {
 			pm, ok := payload.AsMap()
 			require.True(t, ok)
-			s, _ := pm["prompt"].(string)
-			prompts = append(prompts, s)
-			return []uint32{1}, nil, nil
+			arr, ok := pm["prompt"].([]string)
+			require.True(t, ok, "multi-string prompt must be passed as []string")
+			assert.Equal(t, []string{"alpha", "beta"}, arr)
+			return []uint32{1, 2, 3}, nil, nil
 		},
 	}
 	tp, err := renderBackend{tk: tok}.produce(context.Background(), &fwkrh.InferenceRequestBody{
 		Completions: &fwkrh.CompletionsRequest{Prompt: fwkrh.Prompt{Strings: []string{"alpha", "beta"}}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"alpha", "beta"}, prompts)
-	assert.Equal(t, [][]uint32{{1}, {1}}, tp.PerPromptTokens)
+	assert.Equal(t, [][]uint32{{1, 2, 3}}, tp.PerPromptTokens)
 }
 
 func TestRenderBackend_CompletionsSingleArrayUsesPlainText(t *testing.T) {
@@ -447,14 +446,9 @@ func TestProduce_StringArrayPrompt(t *testing.T) {
 	tok := &mockTokenizer{
 		renderFunc: func(payload fwkrh.RequestPayload) ([]uint32, []tokenizerTypes.Offset, error) {
 			pm, _ := payload.AsMap()
-			switch pm["prompt"] {
-			case "hello":
-				return []uint32{10, 20, 30}, nil, nil
-			case "world":
-				return []uint32{40, 50}, nil, nil
-			default:
-				return nil, nil, nil
-			}
+			_, ok := pm["prompt"].([]string)
+			require.True(t, ok, "multi-string prompt must be passed as []string")
+			return []uint32{10, 20, 30, 40, 50}, nil, nil
 		},
 	}
 	p := newTestPlugin(tok)
@@ -468,23 +462,14 @@ func TestProduce_StringArrayPrompt(t *testing.T) {
 	}
 	require.NoError(t, p.Produce(context.Background(), req, nil))
 	require.NotNil(t, req.Body.TokenizedPrompt)
-	require.Len(t, req.Body.TokenizedPrompt.PerPromptTokens, 2)
-	assert.Equal(t, []uint32{10, 20, 30}, req.Body.TokenizedPrompt.PerPromptTokens[0])
-	assert.Equal(t, []uint32{40, 50}, req.Body.TokenizedPrompt.PerPromptTokens[1])
+	require.Len(t, req.Body.TokenizedPrompt.PerPromptTokens, 1)
+	assert.Equal(t, []uint32{10, 20, 30, 40, 50}, req.Body.TokenizedPrompt.PerPromptTokens[0])
 }
 
-func TestProduce_StringArrayPromptFailsOpenOnPartialRenderError(t *testing.T) {
+func TestProduce_StringArrayPromptRenderError(t *testing.T) {
 	tok := &mockTokenizer{
-		renderFunc: func(payload fwkrh.RequestPayload) ([]uint32, []tokenizerTypes.Offset, error) {
-			pm, _ := payload.AsMap()
-			switch pm["prompt"] {
-			case "hello":
-				return []uint32{10, 20, 30}, nil, nil
-			case "broken":
-				return nil, nil, errors.New("render failed")
-			default:
-				return []uint32{40, 50}, nil, nil
-			}
+		renderFunc: func(fwkrh.RequestPayload) ([]uint32, []tokenizerTypes.Offset, error) {
+			return nil, nil, errors.New("render failed")
 		},
 	}
 	p := newTestPlugin(tok)
@@ -492,7 +477,7 @@ func TestProduce_StringArrayPromptFailsOpenOnPartialRenderError(t *testing.T) {
 	req := &scheduling.InferenceRequest{
 		Body: &fwkrh.InferenceRequestBody{
 			Completions: &fwkrh.CompletionsRequest{
-				Prompt: fwkrh.Prompt{Strings: []string{"hello", "broken", "world"}},
+				Prompt: fwkrh.Prompt{Strings: []string{"hello", "world"}},
 			},
 		},
 	}
