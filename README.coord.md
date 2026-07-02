@@ -234,16 +234,18 @@ Both completion endpoints support `"stream": true` for Server-Sent Events stream
 ## Docker
 
 ```bash
-docker build -t coordinator .
-docker run -p 8080:8080 -v $(pwd)/configs:/configs coordinator
+docker build -t coordinator -f Dockerfile.coordinator .
+docker run -p 8080:8080 -v $(pwd)/config/coordinator:/config/coordinator coordinator
 ```
 
 ## Development
 
+The coordinator targets live in `Makefile.coord.mk`; pass it with `-f`:
+
 ```bash
-make build    # Build binary to bin/coordinator
-make test     # Run all tests
-make lint     # Run golangci-lint
-make tidy     # Run go mod tidy
-make clean    # Remove build artifacts
+make -f Makefile.coord.mk build    # Build binary to bin/coordinator
+make -f Makefile.coord.mk test     # Run all tests
+make -f Makefile.coord.mk lint     # Run golangci-lint
+make -f Makefile.coord.mk tidy     # Run go mod tidy
+make -f Makefile.coord.mk clean    # Remove build artifacts
 ```
