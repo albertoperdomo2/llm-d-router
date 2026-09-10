@@ -20,14 +20,18 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 
+	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
+	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
 )
 
@@ -50,7 +54,8 @@ func TestSelectiveKVPluginFactory(t *testing.T) {
 func TestSelectiveKVPluginFactoryConfiguresThresholdPolicy(t *testing.T) {
 	decoder := plugin.StrictDecoder(json.RawMessage(`{
 		"loadPolicy":"threshold",
-		"minExternalReusableTokens":1024
+		"minExternalReusableTokens":1024,
+		"maxWaitingRequests":8
 	}`))
 
 	created, err := PluginFactory("test", decoder, nil)
@@ -59,6 +64,7 @@ func TestSelectiveKVPluginFactoryConfiguresThresholdPolicy(t *testing.T) {
 	p := created.(*Plugin)
 	assert.Equal(t, PolicyThreshold, p.loadPolicy)
 	assert.Equal(t, 1024, p.minExternalReusableTokens)
+	assert.Equal(t, 8, p.maxWaitingRequests)
 	assert.Equal(t, "PrefixCacheMatchInfoDataKey/"+preciseproducer.PluginType,
 		p.prefixMatchInfoDataKey.String())
 }
@@ -106,6 +112,23 @@ func TestSelectiveKVPluginFactoryRejectsInvalidConfig(t *testing.T) {
 			}`,
 			wantError: "minExternalReusableTokens must be greater than zero",
 		},
+		{
+			name: "waiting threshold cannot be negative",
+			parameters: `{
+				"loadPolicy":"threshold",
+				"minExternalReusableTokens":1,
+				"maxWaitingRequests":-1
+			}`,
+			wantError: "maxWaitingRequests must not be negative",
+		},
+		{
+			name: "waiting threshold requires threshold policy",
+			parameters: `{
+				"loadPolicy":"disable",
+				"maxWaitingRequests":8
+			}`,
+			wantError: "maxWaitingRequests requires threshold loadPolicy",
+		},
 	}
 
 	for _, test := range tests {
@@ -118,6 +141,83 @@ func TestSelectiveKVPluginFactoryRejectsInvalidConfig(t *testing.T) {
 			require.ErrorContains(t, err, test.wantError)
 		})
 	}
+}
+
+func TestSelectiveKVThresholdPolicyVetoesWaitingQueuePressure(t *testing.T) {
+	p, err := New("test", Config{
+		LoadPolicy:                PolicyThreshold,
+		OffloadPolicy:             PolicyPreserve,
+		MinExternalReusableTokens: 1024,
+		MaxWaitingRequests:        8,
+	})
+	require.NoError(t, err)
+
+	start := time.Unix(1, 0)
+	tests := []struct {
+		name         string
+		waiting      int
+		updateTime   time.Time
+		wantDisabled bool
+	}{
+		{
+			name:         "closes at threshold",
+			waiting:      8,
+			updateTime:   start,
+			wantDisabled: true,
+		},
+		{
+			name:         "stays closed above reopen threshold",
+			waiting:      0,
+			updateTime:   start.Add(time.Second),
+			wantDisabled: true,
+		},
+		{
+			name:         "reopens after pressure decays",
+			waiting:      0,
+			updateTime:   start.Add(3 * time.Second),
+			wantDisabled: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := thresholdResultWithQueue(p,
+				map[string]int{"gpu": 4, "cpu": 20},
+				test.waiting, test.updateTime)
+			payload := requesthandling.PayloadMap{"model": "test"}
+			body := &requesthandling.InferenceRequestBody{Payload: payload}
+			request := &scheduling.InferenceRequest{Body: body}
+
+			require.NoError(t, p.PreRequest(context.Background(), request, result))
+			params, hasParams := payload["kv_transfer_params"].(map[string]any)
+			if test.wantDisabled {
+				require.True(t, hasParams)
+				assert.Equal(t, []any{}, params["kv_load_tiers"])
+			} else {
+				assert.False(t, hasParams)
+			}
+		})
+	}
+}
+
+func TestSelectiveKVThresholdPolicyIgnoresMissingWaitingQueueSample(t *testing.T) {
+	p, err := New("test", Config{
+		LoadPolicy:                PolicyThreshold,
+		OffloadPolicy:             PolicyPreserve,
+		MinExternalReusableTokens: 1024,
+		MaxWaitingRequests:        8,
+	})
+	require.NoError(t, err)
+
+	result := thresholdResultWithQueue(p,
+		map[string]int{"gpu": 4, "cpu": 20}, 8, time.Time{})
+	payload := requesthandling.PayloadMap{"model": "test"}
+	body := &requesthandling.InferenceRequestBody{Payload: payload}
+
+	require.NoError(t, p.PreRequest(context.Background(),
+		&scheduling.InferenceRequest{Body: body}, result))
+	assert.True(t, body.Mutated)
+	assert.NotContains(t, payload, "kv_transfer_params")
 }
 
 func TestSelectiveKVThresholdPolicy(t *testing.T) {
@@ -221,12 +321,16 @@ func TestSelectiveKVThresholdPolicyConsumesConfiguredData(t *testing.T) {
 		LoadPolicy:                  PolicyThreshold,
 		OffloadPolicy:               PolicyPreserve,
 		MinExternalReusableTokens:   1,
+		MaxWaitingRequests:          8,
 		PrefixMatchInfoProducerName: "precise",
 	})
 	require.NoError(t, err)
 
 	dependencies := p.Consumes()
 	assert.Contains(t, dependencies.Required, p.prefixMatchInfoDataKey)
+	assert.Contains(t, dependencies.Required, plugin.NewDataKey(
+		extractormetrics.WaitingQueueSizeKey,
+		extractormetrics.MetricsExtractorType))
 	assert.Empty(t, dependencies.Optional)
 }
 
@@ -430,6 +534,34 @@ func TestSelectiveKVThresholdPolicyFailsOpenForInvalidBlockSize(t *testing.T) {
 
 func thresholdResult(p *Plugin, byTier map[string]int) *scheduling.SchedulingResult {
 	endpoint := scheduling.NewEndpoint(nil, nil, nil)
+	if byTier != nil {
+		endpoint.Put(p.prefixMatchInfoDataKey,
+			attrprefix.NewPrefixCacheMatchInfo(0, 0, 64).
+				WithCachedBlocksByTier(byTier))
+	}
+	return &scheduling.SchedulingResult{
+		PrimaryProfileName: "default",
+		ProfileResults: map[string]*scheduling.ProfileRunResult{
+			"default": {TargetEndpoints: []scheduling.Endpoint{endpoint}},
+		},
+	}
+}
+
+func thresholdResultWithQueue(p *Plugin, byTier map[string]int, waiting int,
+	updateTime time.Time) *scheduling.SchedulingResult {
+	endpoint := scheduling.NewEndpoint(
+		&fwkdl.EndpointMetadata{
+			ID: k8stypes.NamespacedName{
+				Namespace: "default",
+				Name:      "model-server",
+			},
+		},
+		&fwkdl.Metrics{
+			WaitingQueueSize: waiting,
+			UpdateTime:       updateTime,
+		},
+		nil,
+	)
 	if byTier != nil {
 		endpoint.Put(p.prefixMatchInfoDataKey,
 			attrprefix.NewPrefixCacheMatchInfo(0, 0, 64).

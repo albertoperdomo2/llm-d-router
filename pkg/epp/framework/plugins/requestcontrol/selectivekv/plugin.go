@@ -21,6 +21,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"sync"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -31,6 +34,7 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
+	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
 )
 
@@ -41,6 +45,9 @@ const (
 	fieldKVLoadTiers      = "kv_load_tiers"
 	fieldMaxOffloadTokens = "max_offload_tokens"
 	gpuTierKey            = "gpu"
+
+	waitingQueueEWMAHalfLife = 2 * time.Second
+	waitingQueueReopenRatio  = 0.5
 )
 
 // Policy controls whether the router preserves backend defaults or disables
@@ -58,6 +65,7 @@ type Config struct {
 	LoadPolicy                  Policy `json:"loadPolicy,omitempty"`
 	OffloadPolicy               Policy `json:"offloadPolicy,omitempty"`
 	MinExternalReusableTokens   int    `json:"minExternalReusableTokens,omitempty"`
+	MaxWaitingRequests          int    `json:"maxWaitingRequests,omitempty"`
 	PrefixMatchInfoProducerName string `json:"prefixMatchInfoProducerName,omitempty"`
 }
 
@@ -88,7 +96,16 @@ type Plugin struct {
 	loadPolicy                Policy
 	offloadPolicy             Policy
 	minExternalReusableTokens int
+	maxWaitingRequests        int
 	prefixMatchInfoDataKey    plugin.DataKey
+	waitingQueueMu            sync.Mutex
+	waitingQueueByEndpoint    map[string]waitingQueueState
+}
+
+type waitingQueueState struct {
+	ewma       float64
+	sampleTime time.Time
+	closed     bool
 }
 
 // PluginFactory constructs a selective KV policy plugin.
@@ -123,14 +140,23 @@ func New(name string, cfg Config) (*Plugin, error) {
 	if cfg.LoadPolicy == PolicyThreshold && cfg.MinExternalReusableTokens <= 0 {
 		return nil, fmt.Errorf("%s: minExternalReusableTokens must be greater than zero for threshold policy", PluginType)
 	}
+	if cfg.MaxWaitingRequests < 0 {
+		return nil, fmt.Errorf("%s: maxWaitingRequests must not be negative", PluginType)
+	}
+	if cfg.MaxWaitingRequests > 0 && cfg.LoadPolicy != PolicyThreshold {
+		return nil, fmt.Errorf(
+			"%s: maxWaitingRequests requires threshold loadPolicy", PluginType)
+	}
 
 	return &Plugin{
 		typedName:                 plugin.TypedName{Type: PluginType, Name: name},
 		loadPolicy:                cfg.LoadPolicy,
 		offloadPolicy:             cfg.OffloadPolicy,
 		minExternalReusableTokens: cfg.MinExternalReusableTokens,
+		maxWaitingRequests:        cfg.MaxWaitingRequests,
 		prefixMatchInfoDataKey: attrprefix.PrefixCacheMatchInfoDataKey.
 			WithNonEmptyProducerName(cfg.PrefixMatchInfoProducerName),
+		waitingQueueByEndpoint: make(map[string]waitingQueueState),
 	}, nil
 }
 
@@ -144,11 +170,14 @@ func (p *Plugin) Consumes() plugin.DataDependencies {
 	if p.loadPolicy != PolicyThreshold {
 		return plugin.DataDependencies{}
 	}
-	return plugin.DataDependencies{
-		Required: map[plugin.DataKey]any{
-			p.prefixMatchInfoDataKey: attrprefix.PrefixCacheMatchInfo{},
-		},
+	required := map[plugin.DataKey]any{
+		p.prefixMatchInfoDataKey: attrprefix.PrefixCacheMatchInfo{},
 	}
+	if p.maxWaitingRequests > 0 {
+		required[plugin.NewDataKey(extractormetrics.WaitingQueueSizeKey,
+			extractormetrics.MetricsExtractorType)] = int(0)
+	}
+	return plugin.DataDependencies{Required: required}
 }
 
 // PreRequest overwrites the configured KV transfer controls in parsed JSON
@@ -217,8 +246,10 @@ func (p *Plugin) decideLoad(ctx context.Context,
 		action := loadEnable
 		if tokens < p.minExternalReusableTokens {
 			action = loadDisable
+		} else if p.waitingQueueVeto(endpoint) {
+			action = loadDisable
 		}
-		logger.Info("evaluated selective KV load threshold",
+		logger.Info("evaluated selective KV load policy",
 			"externalReusableTokens", tokens,
 			"minExternalReusableTokens", p.minExternalReusableTokens,
 			"loadAction", action)
@@ -226,6 +257,47 @@ func (p *Plugin) decideLoad(ctx context.Context,
 	default:
 		return loadPreserve
 	}
+}
+
+func (p *Plugin) waitingQueueVeto(endpoint scheduling.Endpoint) bool {
+	if p.maxWaitingRequests == 0 || endpoint == nil {
+		return false
+	}
+	metadata := endpoint.GetMetadata()
+	metrics := endpoint.GetMetrics()
+	if metadata == nil || metadata.ID.Name == "" || metrics == nil ||
+		metrics.UpdateTime.IsZero() {
+		return false
+	}
+
+	endpointID := metadata.ID.String()
+	sampleTime := metrics.UpdateTime
+	sample := float64(metrics.WaitingQueueSize)
+
+	p.waitingQueueMu.Lock()
+	defer p.waitingQueueMu.Unlock()
+
+	state, found := p.waitingQueueByEndpoint[endpointID]
+	if !found || sampleTime.Before(state.sampleTime) {
+		state = waitingQueueState{ewma: sample, sampleTime: sampleTime}
+	} else if sampleTime.After(state.sampleTime) {
+		elapsed := sampleTime.Sub(state.sampleTime)
+		weight := 1 - math.Exp(-math.Ln2*
+			elapsed.Seconds()/waitingQueueEWMAHalfLife.Seconds())
+		state.ewma += weight * (sample - state.ewma)
+		state.sampleTime = sampleTime
+	}
+
+	closeAt := float64(p.maxWaitingRequests)
+	if state.closed {
+		if state.ewma <= closeAt*waitingQueueReopenRatio {
+			state.closed = false
+		}
+	} else if state.ewma >= closeAt {
+		state.closed = true
+	}
+	p.waitingQueueByEndpoint[endpointID] = state
+	return state.closed
 }
 
 func selectedEndpoint(result *scheduling.SchedulingResult) scheduling.Endpoint {
