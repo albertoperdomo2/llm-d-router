@@ -6,7 +6,7 @@ The plugin controls KV loading and offloading independently immediately before E
 
 ## Status and vLLM requirement
 
-This Alpha plugin is a first static implementation of selective loading. It does not measure transfer pressure or derive its threshold while serving traffic. An individual calibrates `minExternalReusableTokens` for a specific model deployment and supplies that value in the EPP configuration.
+This Alpha plugin uses a deployment-specific reusable-token threshold. It can also stop loading when the selected endpoint's smoothed vLLM waiting queue reaches a configured limit.
 
 The binary load opt-out depends on [vLLM PR #55885](https://github.com/vllm-project/vllm/pull/55885) or a vLLM build with equivalent behavior. That behavior defines `kv_transfer_params.kv_load_tiers: []` as disabling loads from the CPU primary tier and every secondary tier while preserving local GPU prefix-cache reuse and the independent store path. Without it, an empty list filters secondary tiers but the CPU primary tier can still be queried.
 
@@ -20,7 +20,7 @@ epp \
   --config-file /etc/epp/config.yaml
 ```
 
-The minimal threshold configuration is:
+The minimal pressure-aware threshold configuration is:
 
 ```yaml
 - type: selective-kv-policy
@@ -28,6 +28,7 @@ The minimal threshold configuration is:
   parameters:
     loadPolicy: threshold
     minExternalReusableTokens: 1024
+    maxWaitingRequests: 8
 ```
 
 `prefixMatchInfoProducerName` defaults to `precise-prefix-cache-producer`, and `offloadPolicy` defaults to `preserve`, so neither field is needed in the common configuration. A precise prefix cache producer with its default name must still be present in the plugin chain.
@@ -35,6 +36,8 @@ The minimal threshold configuration is:
 The threshold is inclusive. If the selected endpoint has at least `minExternalReusableTokens` reusable tokens outside GPU memory, the plugin allows loading by removing `kv_load_tiers`, including an empty opt-out or a non-empty client tier filter. The backend then uses its default load tiers. If fewer external tokens are reusable, the plugin sets `kv_load_tiers: []` and the compatible vLLM backend recomputes the portion that is not already resident in GPU memory. Missing or invalid tier evidence fails open and preserves loading. A non-nil empty tier map is valid evidence of zero reusable blocks, so it falls below every valid threshold and disables loading.
 
 The plugin derives external reusable tokens from the selected endpoint's precise prefix match. It subtracts the GPU-resident matched prefix from the longest matched prefix reported by a non-GPU tier and converts the remaining blocks to tokens. The comparison therefore represents reusable prefix length outside GPU memory, not transfer bytes, queue depth, or measured latency.
+
+When `maxWaitingRequests` is greater than zero, the plugin applies an endpoint-local EWMA to `vllm:num_requests_waiting`. Loading closes when the EWMA reaches the configured value and reopens after it falls to half that value. The EWMA has a fixed two-second half-life. A missing endpoint identity or metrics update timestamp disables the queue veto for that request. Omitting `maxWaitingRequests` preserves the token-only behavior.
 
 At DEBUG log verbosity, threshold mode records the external reusable tokens, configured threshold, and resulting load action. Missing endpoints and missing tier evidence have separate messages. Unsupported request shapes are skipped with a DEBUG message.
 
@@ -44,7 +47,7 @@ The load policy accepts:
 
 - `preserve` or omitted: leave `kv_load_tiers` unchanged.
 - `disable`: always set `kv_load_tiers: []`.
-- `threshold`: load when the selected endpoint's external reusable tokens meet `minExternalReusableTokens`; otherwise set `kv_load_tiers: []`.
+- `threshold`: load when the selected endpoint's external reusable tokens meet `minExternalReusableTokens` and its optional waiting-queue gate is open; otherwise set `kv_load_tiers: []`.
 
 The offload policy accepts:
 
@@ -88,13 +91,13 @@ Recalibrate after changes to the model, hardware topology, parallelism, KV repre
 
 ## Potential improvements
 
-The static threshold isolates the first policy question: whether a reusable prefix is long enough to justify restoration under representative deployment conditions. It does not react when a normally fast CPU-to-GPU path becomes congested.
+The token threshold and waiting-queue gate do not measure load-specific transfer congestion.
 
 Possible follow-up policies include:
 
-- Maintain endpoint-local exponentially weighted moving averages (EWMA) of pending load bytes, completed transfer throughput, and scheduler-observed load wait, then adjust the crossover estimate using current transfer conditions.
+- Consume pending load bytes and completed transfer throughput, then adjust the crossover estimate using load-specific transfer conditions.
 - Estimate recomputation cost from model-specific prefill time per token and compare it directly with predicted lookup, promotion, queueing, and CPU-to-GPU transfer time.
-- Add hysteresis and minimum sample requirements so decisions do not oscillate around a noisy crossover point or react to sparse measurements.
+- Require enough load-specific samples before allowing transfer telemetry to affect decisions.
 - Track separate restore models for CPU-resident and secondary-resident prefixes once vLLM and the EPP data path expose reliable source provenance and source-specific cost.
 - Include endpoint health and load in the decision so the gate does not restore KV through a saturated CPU or transfer queue merely because the prefix exceeds the static threshold.
 - Periodically recalibrate from production observations with bounded defaults and fail-open behavior when measurements are missing or stale.
