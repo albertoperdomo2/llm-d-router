@@ -192,7 +192,7 @@ func TestSelectiveKVThresholdPolicyVetoesWaitingQueuePressure(t *testing.T) {
 			params, hasParams := payload["kv_transfer_params"].(map[string]any)
 			if test.wantDisabled {
 				require.True(t, hasParams)
-				assert.Equal(t, []any{}, params["kv_load_tiers"])
+				assert.Equal(t, json.Number("0"), params["max_load_tokens"])
 			} else {
 				assert.False(t, hasParams)
 			}
@@ -289,7 +289,7 @@ func TestSelectiveKVThresholdPolicy(t *testing.T) {
 			params, hasParams := payload["kv_transfer_params"].(map[string]any)
 			if test.wantDisabled {
 				require.True(t, hasParams)
-				assert.Equal(t, []any{}, params["kv_load_tiers"])
+				assert.Equal(t, json.Number("0"), params["max_load_tokens"])
 			} else {
 				assert.False(t, hasParams)
 			}
@@ -302,7 +302,7 @@ func TestSelectiveKVThresholdPolicyRemovesClientOptOutWhenLoadingWins(t *testing
 	p := newThresholdPlugin(t)
 	payload := requesthandling.PayloadMap{
 		"kv_transfer_params": map[string]any{
-			"kv_load_tiers":    []any{},
+			"max_load_tokens":  json.Number("0"),
 			"remote_engine_id": "engine-a",
 		},
 	}
@@ -354,7 +354,7 @@ func TestSelectiveKVPreRequestAppliesIndependentPolicies(t *testing.T) {
 			},
 			want: requesthandling.PayloadMap{
 				"kv_transfer_params": map[string]any{
-					"kv_load_tiers":      []any{},
+					"max_load_tokens":    json.Number("0"),
 					"max_offload_tokens": 64,
 					"remote_engine_id":   "engine-a",
 				},
@@ -386,7 +386,7 @@ func TestSelectiveKVPreRequestAppliesIndependentPolicies(t *testing.T) {
 			want: requesthandling.PayloadMap{
 				"model": "test",
 				"kv_transfer_params": map[string]any{
-					"kv_load_tiers":      []any{},
+					"max_load_tokens":    json.Number("0"),
 					"max_offload_tokens": json.Number("0"),
 				},
 			},
@@ -422,6 +422,7 @@ func TestSelectiveKVPreRequestOverwritesClientPolicyAndIsIdempotent(t *testing.T
 		"model": "test",
 		"kv_transfer_params": map[string]any{
 			"kv_load_tiers":      []any{map[string]any{"medium": "STORAGE"}},
+			"max_load_tokens":    1024,
 			"max_offload_tokens": 1024,
 			"remote_engine_id":   "engine-a",
 		},
@@ -443,7 +444,8 @@ func TestSelectiveKVPreRequestOverwritesClientPolicyAndIsIdempotent(t *testing.T
 	assert.JSONEq(t, `{
 		"model":"test",
 		"kv_transfer_params":{
-			"kv_load_tiers":[],
+			"kv_load_tiers":[{"medium":"STORAGE"}],
+			"max_load_tokens":0,
 			"max_offload_tokens":0,
 			"remote_engine_id":"engine-a"
 		}
@@ -462,7 +464,8 @@ func TestSelectiveKVPreRequestReplacesMalformedTransferParams(t *testing.T) {
 	request := &scheduling.InferenceRequest{Body: body}
 
 	require.NoError(t, p.PreRequest(context.Background(), request, nil))
-	assert.Equal(t, map[string]any{"kv_load_tiers": []any{}}, payload["kv_transfer_params"])
+	assert.Equal(t, map[string]any{"max_load_tokens": json.Number("0")},
+		payload["kv_transfer_params"])
 }
 
 func TestSelectiveKVPreRequestSkipsUnsupportedRequestShapes(t *testing.T) {

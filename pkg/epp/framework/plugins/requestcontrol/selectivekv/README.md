@@ -8,7 +8,7 @@ The plugin controls KV loading and offloading independently immediately before E
 
 This Alpha plugin uses a deployment-specific reusable-token threshold. It can also stop loading when the selected endpoint's smoothed vLLM waiting queue reaches a configured limit.
 
-The binary load opt-out depends on [vLLM PR #55885](https://github.com/vllm-project/vllm/pull/55885) or a vLLM build with equivalent behavior. That behavior defines `kv_transfer_params.kv_load_tiers: []` as disabling loads from the CPU primary tier and every secondary tier while preserving local GPU prefix-cache reuse and the independent store path. Without it, an empty list filters secondary tiers but the CPU primary tier can still be queried.
+The load control depends on [vLLM PR #55885](https://github.com/vllm-project/vllm/pull/55885) or a vLLM build with equivalent behavior. That API defines `kv_transfer_params.max_load_tokens: 0` as disabling external loads from the CPU primary tier and every secondary tier while preserving local GPU prefix-cache reuse and the independent store path. Omitting `max_load_tokens` preserves uncapped external loading.
 
 ## Configuration
 
@@ -31,9 +31,11 @@ The minimal pressure-aware threshold configuration is:
     maxWaitingRequests: 8
 ```
 
+For Qwen3-32B with tensor parallelism 2, four replicas on one node with eight H100 GPUs, and the tested CPU and NVMe offloading configuration, `maxWaitingRequests: 8` is the current experimental queue threshold. This value is specific to that deployment and is not a general default. The example combines it with the deployment's `minExternalReusableTokens: 1024` token threshold.
+
 `prefixMatchInfoProducerName` defaults to `precise-prefix-cache-producer`, and `offloadPolicy` defaults to `preserve`, so neither field is needed in the common configuration. A precise prefix cache producer with its default name must still be present in the plugin chain.
 
-The threshold is inclusive. If the selected endpoint has at least `minExternalReusableTokens` reusable tokens outside GPU memory, the plugin allows loading by removing `kv_load_tiers`, including an empty opt-out or a non-empty client tier filter. The backend then uses its default load tiers. If fewer external tokens are reusable, the plugin sets `kv_load_tiers: []` and the compatible vLLM backend recomputes the portion that is not already resident in GPU memory. Missing or invalid tier evidence fails open and preserves loading. A non-nil empty tier map is valid evidence of zero reusable blocks, so it falls below every valid threshold and disables loading.
+The threshold is inclusive. If the selected endpoint has at least `minExternalReusableTokens` reusable tokens outside GPU memory, the plugin allows uncapped loading by removing `max_load_tokens`. If fewer external tokens are reusable, the plugin sets `max_load_tokens: 0` and the compatible vLLM backend recomputes the portion that is not already resident in GPU memory. Missing or invalid tier evidence fails open and preserves loading. A non-nil empty tier map is valid evidence of zero reusable blocks, so it falls below every valid threshold and disables loading.
 
 The plugin derives external reusable tokens from the selected endpoint's precise prefix match. It subtracts the GPU-resident matched prefix from the longest matched prefix reported by a non-GPU tier and converts the remaining blocks to tokens. The comparison therefore represents reusable prefix length outside GPU memory, not transfer bytes, queue depth, or measured latency.
 
@@ -45,9 +47,9 @@ At DEBUG log verbosity, threshold mode records the external reusable tokens, con
 
 The load policy accepts:
 
-- `preserve` or omitted: leave `kv_load_tiers` unchanged.
-- `disable`: always set `kv_load_tiers: []`.
-- `threshold`: load when the selected endpoint's external reusable tokens meet `minExternalReusableTokens` and its optional waiting-queue gate is open; otherwise set `kv_load_tiers: []`.
+- `preserve` or omitted: leave `max_load_tokens` unchanged.
+- `disable`: always set `max_load_tokens: 0`.
+- `threshold`: load when the selected endpoint's external reusable tokens meet `minExternalReusableTokens` and its optional waiting-queue gate is open; otherwise set `max_load_tokens: 0`.
 
 The offload policy accepts:
 
@@ -61,19 +63,19 @@ Loading and offloading decisions are independent. For example, explicitly disabl
 ```json
 {
   "kv_transfer_params": {
-    "kv_load_tiers": [],
+    "max_load_tokens": 0,
     "max_offload_tokens": 0
   }
 }
 ```
 
-Any non-empty `kv_load_tiers` selection keeps the CPU primary tier enabled, including a selection that names only `STORAGE`. Non-empty filters select secondary tiers; CPU can satisfy a resident hit directly and is also the required staging tier for secondary-to-GPU promotion. A secondary-only load path is not supported by this policy or the corresponding vLLM contract.
+The plugin does not modify `kv_load_tiers`. That field continues to filter secondary tiers, while CPU remains available as a direct source and as the required staging tier for secondary-to-GPU promotion. `max_load_tokens: 0` disables loading regardless of the tier filter.
 
 ## Calibrating the static threshold (WIP)
 
 Calibrate the threshold on the same model, accelerator and CPU topology, tensor parallelism, KV dtype, cache block and offload chunk sizes, connector configuration, and concurrency range used by the deployment. A threshold measured for another deployment is not portable because both recomputation cost and KV restoration cost change with those parameters.
 
-Use paired trials that differ only in the load decision. Populate the external cache with a known prefix, clear or displace its GPU-resident KV while retaining its CPU or secondary copy, and issue one request that permits loading and another with `kv_load_tiers: []`. Keep the uncached suffix and generated-token count fixed. Verify the permitted arm reports external reuse and the disabled arm reports recomputation before comparing latency.
+Use paired trials that differ only in the load decision. Populate the external cache with a known prefix, clear or displace its GPU-resident KV while retaining its CPU or secondary copy, and issue one request that permits loading and another with `max_load_tokens: 0`. Keep the uncached suffix and generated-token count fixed. Verify the permitted arm reports external reuse and the disabled arm reports recomputation before comparing latency.
 
 Sweep the reusable prefix length across a range that includes short prefixes where recomputation should win and long prefixes where restoration should win. Repeat each point enough times to obtain stable TTFT percentiles, and repeat the sweep at the deployment's expected concurrency levels. Record errors, cancellations, preemptions, local and external cached tokens, request TTFT, total latency, prefill throughput, and any available KV lookup and transfer latency or byte counters.
 

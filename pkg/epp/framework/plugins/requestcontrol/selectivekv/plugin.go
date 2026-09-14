@@ -42,7 +42,7 @@ const (
 	// PluginType is the registered type name of the selective KV policy plugin.
 	PluginType = "selective-kv-policy"
 
-	fieldKVLoadTiers      = "kv_load_tiers"
+	fieldMaxLoadTokens    = "max_load_tokens"
 	fieldMaxOffloadTokens = "max_offload_tokens"
 	gpuTierKey            = "gpu"
 
@@ -215,9 +215,9 @@ func (p *Plugin) PreRequest(ctx context.Context, request *scheduling.InferenceRe
 		}
 		switch load {
 		case loadDisable:
-			params[fieldKVLoadTiers] = []any{}
+			params[fieldMaxLoadTokens] = json.Number("0")
 		case loadEnable:
-			delete(params, fieldKVLoadTiers)
+			delete(params, fieldMaxLoadTokens)
 		}
 		if p.offloadPolicy == PolicyDisable {
 			params[fieldMaxOffloadTokens] = json.Number("0")
