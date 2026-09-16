@@ -33,6 +33,7 @@ import (
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
 	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/openai"
 )
 
 func TestSelectiveKVPluginFactory(t *testing.T) {
@@ -314,6 +315,67 @@ func TestSelectiveKVThresholdPolicyRemovesClientOptOutWhenLoadingWins(t *testing
 	assert.Equal(t, map[string]any{"remote_engine_id": "engine-a"},
 		payload["kv_transfer_params"])
 	assert.True(t, body.Mutated)
+}
+
+func TestSelectiveKVPreRequestMutatesOpenAIParserOutput(t *testing.T) {
+	parseRequest := func(t *testing.T) *scheduling.InferenceRequest {
+		t.Helper()
+		parsed, err := openai.NewOpenAIParser().ParseRequest(context.Background(), []byte(`{
+			"model":"test",
+			"messages":[{"role":"user","content":"hello"}],
+			"kv_transfer_params":{
+				"max_load_tokens":0,
+				"remote_engine_id":"engine-a",
+				"kv_load_tiers":["CPU"]
+			}
+		}`), map[string]string{":path": "/v1/chat/completions"})
+		require.NoError(t, err)
+		payload, ok := parsed.Body.Payload.AsMap()
+		require.True(t, ok)
+		_, ok = payload["kv_transfer_params"].(json.RawMessage)
+		require.True(t, ok)
+		return &scheduling.InferenceRequest{Body: parsed.Body}
+	}
+
+	t.Run("disable preserves existing parameters", func(t *testing.T) {
+		p, err := New("test", Config{
+			LoadPolicy:    PolicyDisable,
+			OffloadPolicy: PolicyPreserve,
+		})
+		require.NoError(t, err)
+		request := parseRequest(t)
+
+		require.NoError(t, p.PreRequest(context.Background(), request, nil))
+		encoded, err := request.Body.Payload.(requesthandling.PayloadMap).Marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{
+			"model":"test",
+			"messages":[{"role":"user","content":"hello"}],
+			"kv_transfer_params":{
+				"max_load_tokens":0,
+				"remote_engine_id":"engine-a",
+				"kv_load_tiers":["CPU"]
+			}
+		}`, string(encoded))
+	})
+
+	t.Run("enable removes client opt out", func(t *testing.T) {
+		p := newThresholdPlugin(t)
+		request := parseRequest(t)
+		result := thresholdResult(p, map[string]int{"gpu": 4, "cpu": 20})
+
+		require.NoError(t, p.PreRequest(context.Background(), request, result))
+		encoded, err := request.Body.Payload.(requesthandling.PayloadMap).Marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{
+			"model":"test",
+			"messages":[{"role":"user","content":"hello"}],
+			"kv_transfer_params":{
+				"remote_engine_id":"engine-a",
+				"kv_load_tiers":["CPU"]
+			}
+		}`, string(encoded))
+	})
 }
 
 func TestSelectiveKVThresholdPolicyConsumesConfiguredData(t *testing.T) {
