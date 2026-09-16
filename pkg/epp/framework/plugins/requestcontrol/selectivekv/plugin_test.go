@@ -32,9 +32,19 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
 	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
+	sourcenotifications "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/source/notifications"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/openai"
 )
+
+type recordingRegistrar struct {
+	registrations []fwkdl.PendingRegistration
+}
+
+func (r *recordingRegistrar) Register(registration fwkdl.PendingRegistration) error {
+	r.registrations = append(r.registrations, registration)
+	return nil
+}
 
 func TestSelectiveKVPluginFactory(t *testing.T) {
 	decoder := plugin.StrictDecoder(json.RawMessage(`{
@@ -68,6 +78,60 @@ func TestSelectiveKVPluginFactoryConfiguresThresholdPolicy(t *testing.T) {
 	assert.Equal(t, 8, p.maxWaitingRequests)
 	assert.Equal(t, "PrefixCacheMatchInfoDataKey/"+preciseproducer.PluginType,
 		p.prefixMatchInfoDataKey.String())
+}
+
+func TestSelectiveKVRegistersEndpointCleanupForQueueGate(t *testing.T) {
+	p, err := New("test", Config{
+		LoadPolicy:                PolicyThreshold,
+		OffloadPolicy:             PolicyPreserve,
+		MinExternalReusableTokens: 1024,
+		MaxWaitingRequests:        8,
+	})
+	require.NoError(t, err)
+	registrar := &recordingRegistrar{}
+
+	require.NoError(t, p.RegisterDependencies(registrar))
+	require.Len(t, registrar.registrations, 1)
+	registration := registrar.registrations[0]
+	assert.Equal(t, p.TypedName(), registration.Owner)
+	assert.Equal(t, sourcenotifications.EndpointNotificationSourceType,
+		registration.SourceType)
+	assert.Same(t, p, registration.Extractor)
+	assert.NotNil(t, registration.DefaultSource)
+}
+
+func TestSelectiveKVSkipsEndpointCleanupWithoutQueueGate(t *testing.T) {
+	p, err := New("test", Config{
+		LoadPolicy:    PolicyDisable,
+		OffloadPolicy: PolicyPreserve,
+	})
+	require.NoError(t, err)
+	registrar := &recordingRegistrar{}
+
+	require.NoError(t, p.RegisterDependencies(registrar))
+	assert.Empty(t, registrar.registrations)
+}
+
+func TestSelectiveKVRemovesWaitingQueueStateForDeletedEndpoint(t *testing.T) {
+	p, err := New("test", Config{
+		LoadPolicy:                PolicyThreshold,
+		OffloadPolicy:             PolicyPreserve,
+		MinExternalReusableTokens: 1024,
+		MaxWaitingRequests:        8,
+	})
+	require.NoError(t, err)
+	result := thresholdResultWithQueue(p,
+		map[string]int{"gpu": 4, "cpu": 20}, 8, time.Unix(1, 0))
+	endpoint := selectedEndpoint(result)
+
+	assert.True(t, p.waitingQueueVeto(endpoint))
+	require.Len(t, p.waitingQueueByEndpoint, 1)
+	dataEndpoint := fwkdl.NewEndpoint(endpoint.GetMetadata(), endpoint.GetMetrics())
+	require.NoError(t, p.Extract(context.Background(), fwkdl.EndpointEvent{
+		Type:     fwkdl.EventDelete,
+		Endpoint: dataEndpoint,
+	}))
+	assert.Empty(t, p.waitingQueueByEndpoint)
 }
 
 func TestSelectiveKVPluginFactoryRejectsInvalidConfig(t *testing.T) {

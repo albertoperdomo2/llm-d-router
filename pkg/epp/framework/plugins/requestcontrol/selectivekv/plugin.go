@@ -29,12 +29,14 @@ import (
 
 	"github.com/llm-d/llm-d-router/pkg/common/observability/logging"
 	commonrequest "github.com/llm-d/llm-d-router/pkg/common/request"
+	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requestcontrol"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
 	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
+	sourcenotifications "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/source/notifications"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/util"
 )
@@ -89,6 +91,8 @@ const (
 var (
 	_ requestcontrol.PreRequest = &Plugin{}
 	_ plugin.ConsumerPlugin     = &Plugin{}
+	_ fwkdl.EndpointExtractor   = &Plugin{}
+	_ fwkdl.Registrant          = &Plugin{}
 )
 
 // Plugin applies the configured policy immediately before backend dispatch.
@@ -179,6 +183,38 @@ func (p *Plugin) Consumes() plugin.DataDependencies {
 			extractormetrics.MetricsExtractorType)] = int(0)
 	}
 	return plugin.DataDependencies{Required: required}
+}
+
+// RegisterDependencies subscribes queue-aware policies to endpoint lifecycle events.
+func (p *Plugin) RegisterDependencies(registrar fwkdl.Registrar) error {
+	if p.maxWaitingRequests == 0 {
+		return nil
+	}
+	return registrar.Register(fwkdl.PendingRegistration{
+		Owner:      p.TypedName(),
+		SourceType: sourcenotifications.EndpointNotificationSourceType,
+		Extractor:  p,
+		DefaultSource: sourcenotifications.NewEndpointDataSource(
+			sourcenotifications.EndpointNotificationSourceType,
+			sourcenotifications.EndpointNotificationSourceType,
+		),
+	})
+}
+
+// Extract removes queue state when an endpoint leaves the pool.
+func (p *Plugin) Extract(_ context.Context, event fwkdl.EndpointEvent) error {
+	if event.Type != fwkdl.EventDelete || event.Endpoint == nil {
+		return nil
+	}
+	metadata := event.Endpoint.GetMetadata()
+	if metadata == nil || metadata.ID.Name == "" {
+		return nil
+	}
+
+	p.waitingQueueMu.Lock()
+	delete(p.waitingQueueByEndpoint, metadata.ID.String())
+	p.waitingQueueMu.Unlock()
+	return nil
 }
 
 // PreRequest overwrites the configured KV transfer controls in parsed JSON
