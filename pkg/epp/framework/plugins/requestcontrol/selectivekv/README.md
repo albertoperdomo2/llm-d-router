@@ -110,6 +110,8 @@ Dynamic gating should predict the cost of the action before changing the request
 
 The plugin overwrites the fields controlled by its configured policies and preserves other existing `kv_transfer_params` fields. It supports parsed OpenAI-compatible JSON requests on the direct EPP path. Unsupported payloads, including native-generate and unparsed requests, fail open: the plugin logs the skip and leaves the request unchanged.
 
+Threshold mode is intended for single-prompt requests during Alpha. The precise prefix cache producer sums per-tier block counts across prompts before publishing them. Taking the longest external tier after that aggregation can undercount reusable external blocks when different prompts have their longest match in different tiers, causing threshold mode to disable loading when the per-prompt total meets the configured threshold. The `preserve` and `disable` load policies do not use these counts and are unaffected. Multi-prompt threshold support requires the producer to publish the sum of each prompt's reusable external blocks before per-tier aggregation.
+
 The coordinator prefill path currently replaces `kv_transfer_params` after this hook runs, so it discards this plugin's mutation. Selective KV policy is therefore not effective on that path until coordinator propagation is implemented.
 
 The threshold decision uses the first endpoint in the scheduling result's primary profile. In a disaggregated deployment the primary profile is normally decode even though KV loading happens at prefill, so this implementation must not be used there unless the selected primary endpoint is also the endpoint whose tier evidence and load decision apply. Supporting disaggregated serving requires selecting the prefill profile explicitly.
