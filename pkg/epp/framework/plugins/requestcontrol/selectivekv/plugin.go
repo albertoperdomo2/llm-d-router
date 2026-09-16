@@ -235,49 +235,70 @@ func (p *Plugin) PreRequest(ctx context.Context, request *scheduling.InferenceRe
 			"requestID", request.RequestID)
 		return nil
 	}
-	if _, ok := request.Body.Payload.AsMap(); !ok {
+	payload, ok := request.Body.Payload.(requesthandling.PayloadMap)
+	if !ok {
 		logger.Info("skipping selective KV policy: request payload is not mutable JSON",
 			"requestID", request.RequestID)
 		return nil
 	}
 
-	request.Body.MutatePayloadMap(func(payload requesthandling.PayloadMap) {
-		params := mutableKVTransferParams(payload)
-		if params == nil {
-			if load != loadDisable && p.offloadPolicy != PolicyDisable {
-				return
-			}
-			params = map[string]any{}
-			payload[commonrequest.FieldKVTransferParams] = params
-		}
-		switch load {
-		case loadDisable:
-			params[fieldMaxLoadTokens] = json.Number("0")
-		case loadEnable:
-			delete(params, fieldMaxLoadTokens)
-		}
-		if p.offloadPolicy == PolicyDisable {
-			params[fieldMaxOffloadTokens] = json.Number("0")
-		}
-	})
+	if mutateKVTransferParams(payload, load, p.offloadPolicy) {
+		request.Body.Mutated = true
+	}
 	return nil
 }
 
-func mutableKVTransferParams(payload requesthandling.PayloadMap) map[string]any {
+func mutateKVTransferParams(payload requesthandling.PayloadMap, load loadAction,
+	offload Policy) bool {
 	value := payload[commonrequest.FieldKVTransferParams]
-	if params, ok := value.(map[string]any); ok {
-		return params
+	params, decoded := value.(map[string]any)
+	if !decoded {
+		raw, ok := value.(json.RawMessage)
+		if ok {
+			if err := parserutil.Unmarshal(raw, &params); err == nil && params != nil {
+				decoded = true
+			}
+		}
 	}
-	raw, ok := value.(json.RawMessage)
-	if !ok {
-		return nil
+	if !decoded {
+		if load != loadDisable && offload != PolicyDisable {
+			return false
+		}
+		params = map[string]any{}
 	}
-	var params map[string]any
-	if err := parserutil.Unmarshal(raw, &params); err != nil || params == nil {
-		return nil
+
+	changed := false
+	switch load {
+	case loadDisable:
+		changed = setZero(params, fieldMaxLoadTokens)
+	case loadEnable:
+		if _, exists := params[fieldMaxLoadTokens]; exists {
+			delete(params, fieldMaxLoadTokens)
+			changed = true
+		}
 	}
-	payload[commonrequest.FieldKVTransferParams] = params
-	return params
+	if offload == PolicyDisable {
+		changed = setZero(params, fieldMaxOffloadTokens) || changed
+	}
+	if changed {
+		payload[commonrequest.FieldKVTransferParams] = params
+	}
+	return changed
+}
+
+func setZero(params map[string]any, field string) bool {
+	switch value := params[field].(type) {
+	case json.Number:
+		if number, err := value.Float64(); err == nil && number == 0 {
+			return false
+		}
+	case float64:
+		if value == 0 {
+			return false
+		}
+	}
+	params[field] = json.Number("0")
+	return true
 }
 
 func (p *Plugin) decideLoad(ctx context.Context,
