@@ -36,6 +36,7 @@ import (
 	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
 	extractormetrics "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/extractor/metrics"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/util"
 )
 
 const (
@@ -205,7 +206,7 @@ func (p *Plugin) PreRequest(ctx context.Context, request *scheduling.InferenceRe
 	}
 
 	request.Body.MutatePayloadMap(func(payload requesthandling.PayloadMap) {
-		params, _ := payload[commonrequest.FieldKVTransferParams].(map[string]any)
+		params := mutableKVTransferParams(payload)
 		if params == nil {
 			if load != loadDisable && p.offloadPolicy != PolicyDisable {
 				return
@@ -224,6 +225,23 @@ func (p *Plugin) PreRequest(ctx context.Context, request *scheduling.InferenceRe
 		}
 	})
 	return nil
+}
+
+func mutableKVTransferParams(payload requesthandling.PayloadMap) map[string]any {
+	value := payload[commonrequest.FieldKVTransferParams]
+	if params, ok := value.(map[string]any); ok {
+		return params
+	}
+	raw, ok := value.(json.RawMessage)
+	if !ok {
+		return nil
+	}
+	var params map[string]any
+	if err := parserutil.Unmarshal(raw, &params); err != nil || params == nil {
+		return nil
+	}
+	payload[commonrequest.FieldKVTransferParams] = params
+	return params
 }
 
 func (p *Plugin) decideLoad(ctx context.Context,
