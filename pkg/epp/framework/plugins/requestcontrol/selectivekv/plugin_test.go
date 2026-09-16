@@ -281,7 +281,7 @@ func TestSelectiveKVThresholdPolicyIgnoresMissingWaitingQueueSample(t *testing.T
 
 	require.NoError(t, p.PreRequest(context.Background(),
 		&scheduling.InferenceRequest{Body: body}, result))
-	assert.True(t, body.Mutated)
+	assert.False(t, body.Mutated)
 	assert.NotContains(t, payload, "kv_transfer_params")
 }
 
@@ -304,7 +304,7 @@ func TestSelectiveKVThresholdPolicy(t *testing.T) {
 			name:          "threshold-sized external prefix loads",
 			byTier:        map[string]int{"gpu": 4, "cpu": 20},
 			wantDisabled:  false,
-			wantBodyDirty: true,
+			wantBodyDirty: false,
 		},
 		{
 			name: "largest external tier determines reusable tokens",
@@ -312,7 +312,7 @@ func TestSelectiveKVThresholdPolicy(t *testing.T) {
 				"gpu": 4, "cpu": 12, "storage": 24,
 			},
 			wantDisabled:  false,
-			wantBodyDirty: true,
+			wantBodyDirty: false,
 		},
 		{
 			name:          "missing tier evidence fails open",
@@ -400,6 +400,16 @@ func TestSelectiveKVPreRequestMutatesOpenAIParserOutput(t *testing.T) {
 		require.True(t, ok)
 		return &scheduling.InferenceRequest{Body: parsed.Body}
 	}
+	parseRequestWithoutPolicy := func(t *testing.T) *scheduling.InferenceRequest {
+		t.Helper()
+		parsed, err := openai.NewOpenAIParser().ParseRequest(context.Background(), []byte(`{
+			"model":"test",
+			"messages":[{"role":"user","content":"hello"}],
+			"kv_transfer_params":{"remote_engine_id":"engine-a"}
+		}`), map[string]string{":path": "/v1/chat/completions"})
+		require.NoError(t, err)
+		return &scheduling.InferenceRequest{Body: parsed.Body}
+	}
 
 	t.Run("disable preserves existing parameters", func(t *testing.T) {
 		p, err := New("test", Config{
@@ -410,6 +420,8 @@ func TestSelectiveKVPreRequestMutatesOpenAIParserOutput(t *testing.T) {
 		request := parseRequest(t)
 
 		require.NoError(t, p.PreRequest(context.Background(), request, nil))
+		assert.False(t, request.Body.Mutated)
+		assert.Equal(t, request.Body.RawBody, []byte(request.Body.WirePayload().(requesthandling.RawPayload)))
 		encoded, err := request.Body.Payload.(requesthandling.PayloadMap).Marshal()
 		require.NoError(t, err)
 		assert.JSONEq(t, `{
@@ -421,6 +433,20 @@ func TestSelectiveKVPreRequestMutatesOpenAIParserOutput(t *testing.T) {
 				"kv_load_tiers":["CPU"]
 			}
 		}`, string(encoded))
+	})
+
+	t.Run("enable preserves body without client policy", func(t *testing.T) {
+		p := newThresholdPlugin(t)
+		request := parseRequestWithoutPolicy(t)
+		result := thresholdResult(p, map[string]int{"gpu": 4, "cpu": 20})
+
+		require.NoError(t, p.PreRequest(context.Background(), request, result))
+		assert.False(t, request.Body.Mutated)
+		assert.Equal(t, request.Body.RawBody, []byte(request.Body.WirePayload().(requesthandling.RawPayload)))
+		payload, ok := request.Body.Payload.AsMap()
+		require.True(t, ok)
+		_, ok = payload["kv_transfer_params"].(json.RawMessage)
+		assert.True(t, ok)
 	})
 
 	t.Run("enable removes client opt out", func(t *testing.T) {
@@ -562,7 +588,7 @@ func TestSelectiveKVPreRequestOverwritesClientPolicyAndIsIdempotent(t *testing.T
 	assert.True(t, body.Mutated)
 	body.Mutated = false
 	require.NoError(t, p.PreRequest(context.Background(), request, nil))
-	assert.True(t, body.Mutated)
+	assert.False(t, body.Mutated)
 
 	encoded, err := payload.Marshal()
 	require.NoError(t, err)
