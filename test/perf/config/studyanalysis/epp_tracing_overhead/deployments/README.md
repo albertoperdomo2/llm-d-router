@@ -1,13 +1,13 @@
 # Deployments
 
 The study used the llm-d optimized-baseline inference-scheduling topology with
-an Istio Gateway and one EPP. The model pool contained eight replicas. Use a
+an Istio Gateway and one EPP. The model pool contained eight replicas. We use a
 separate namespace or remove the preceding deployment before switching between
 the simulator and live targets.
 
 ## Prerequisites
 
-Install the Gateway API, Gateway API Inference Extension, Istio, and an Istio
+The study installs the Gateway API, Gateway API Inference Extension, Istio, and an Istio
 Gateway named `llm-d-inference-gateway`. The llm-d optimized-baseline guide
 documents those platform prerequisites.
 
@@ -75,7 +75,7 @@ helm upgrade --install epp-tracing \
   --wait
 ```
 
-That command is the tracing-off case. For an enabled ratio, append these values
+That command is the tracing-off case. For an enabled ratio, we append these values
 arguments before `--set`:
 
 ```sh
@@ -83,12 +83,12 @@ arguments before `--set`:
 -f "$STUDY_DIR/deployments/tracing/ratio-10.values.yaml"
 ```
 
-Replace `ratio-10.values.yaml` with the required ratio. Add
-`pprof.values.yaml` only for the diagnostic 100% run. Use `helm uninstall` and
-install again between measured variants so no process state carries across
+The study replaces `ratio-10.values.yaml` with the required ratio, adds
+`pprof.values.yaml` only for the diagnostic 100% run and uses `helm uninstall` and
+installs again between measured variants so no process state carries across
 runs.
 
-Resolve the Gateway address for GuideLLM:
+We resolve the Gateway address for GuideLLM as:
 
 ```sh
 export TARGET="http://$(kubectl get gateway llm-d-inference-gateway \
