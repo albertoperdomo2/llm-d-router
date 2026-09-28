@@ -61,6 +61,7 @@ const chatCompletionsRequestBodyWithMinCap = `{
 				"min_tokens": 5
 			}`
 
+//nolint:gosec // G101: JSON test-fixture string, not a credential
 const generateRequestBodyWithTokenLimits = `{
 				"model": "Qwen/Qwen2-0.5B",
 				"token_ids": [1, 2, 3, 4],
@@ -85,7 +86,7 @@ func expectGenerateRequestTokenLimits(testInfo *sidecarTestInfo) {
 
 	resp, err := http.DefaultClient.Do(req)
 	Expect(err).ToNot(HaveOccurred())
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		bp, _ := io.ReadAll(resp.Body) //nolint:errcheck
@@ -379,7 +380,7 @@ var _ = Describe("Non-object request body", func() {
 
 			resp, err := http.DefaultClient.Do(req)
 			Expect(err).ToNot(HaveOccurred())
-			defer resp.Body.Close() //nolint:errcheck
+			defer resp.Body.Close()
 
 			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 			respBody, err := io.ReadAll(resp.Body)
