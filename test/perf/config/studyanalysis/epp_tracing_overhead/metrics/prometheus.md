@@ -1,6 +1,6 @@
 # Prometheus measurements
 
-Query at a 10-second step over the GuideLLM measurement window. Replace
+We query at a 10-second step over the GuideLLM measurement window and replace
 `NAMESPACE` and `EPP_POD_REGEX` with the deployed namespace and EPP pod regular
 expression.
 
@@ -35,7 +35,7 @@ clamp_min(
 )
 ```
 
-Collect EPP scheduler, request-processing, and response-processing p50, p95,
+This study collects EPP scheduler, request-processing, and response-processing p50, p95,
 and p99 by substituting the metric and quantile below:
 
 ```promql
@@ -60,7 +60,7 @@ rate(llm_d_epp_request_total{
 }[1m])
 ```
 
-Verify the effective sampling ratio from counter increases over the same
+We verify the effective sampling ratio from counter increases over the same
 measurement window:
 
 ```promql
@@ -77,11 +77,9 @@ sum(increase(llm_d_epp_request_total{
 }[BENCHMARK_WINDOW]))
 ```
 
-Calculate accepted spans per request for each ratio and divide it by the 100%
-result. The normalized values should be close to 0.01, 0.10, and 1.00. This
+This study calculates accepted spans per request for each ratio and divides it by the 100%
+result. The normalized values is close to 0.01, 0.10, and 1.00. This
 check detects incoming sampled trace contexts that the parent-based sampler
-would follow instead of applying the configured root ratio. Retain both raw
-counter results.
-
-Average finite CPU and working-set samples across the steady measurement
-window. Report throttling separately and retain the raw time series.
+would follow instead of applying the configured root ratio. Finally, we retain both raw
+counter results, average finite CPU and working-set samples across the steady measurement
+window and report throttling separately and retain the raw time series.
