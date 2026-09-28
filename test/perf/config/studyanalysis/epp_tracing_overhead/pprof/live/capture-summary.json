@@ -1,0 +1,18 @@
+{
+  "benchmark_ended_at": "2026-09-24T14:48:18Z",
+  "benchmark_started_at": "2026-09-24T14:42:33.644935Z",
+  "capture_delay_seconds": 60,
+  "collect_heap": true,
+  "complete_pods": [
+    "gaie-epp-tracing-overhead-live-m5-49-848-epp-64655d7765-48shr"
+  ],
+  "cpu_duration_seconds": 30,
+  "discovered_pods": [
+    "gaie-epp-tracing-overhead-live-m5-49-848-epp-64655d7765-48shr"
+  ],
+  "error": null,
+  "expected_pods": 1,
+  "failed_pods": [],
+  "partial_pods": [],
+  "status": "complete"
+}

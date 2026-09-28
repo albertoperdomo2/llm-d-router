@@ -1,0 +1,11 @@
+response_mode,sample_ratio,median_throughput_change_percent,median_mean_latency_change_percent,median_p99_latency_change_percent,included_measurements,request_errors,notes
+non-streaming,0,-0.01005,-0.06229,-0.07161,10,0,clean replacement runs used
+non-streaming,1,-0.00167,0.00789,0.23269,10,0,clean replacement runs used
+non-streaming,10,-0.00168,-0.05333,0.09288,10,0,clean replacement runs used
+non-streaming,50,-0.00168,0.01898,0.10846,10,0,clean replacement runs used
+non-streaming,100,-0.00168,0.01545,-0.09144,10,0,clean replacement runs used
+streaming,0,0.00083,0.03521,-0.08216,8,0,800 RPS and concurrency 128 excluded
+streaming,1,0.00000,0.01896,1.01677,8,0,800 RPS and concurrency 128 excluded
+streaming,10,0.00000,0.07773,0.89267,8,0,800 RPS and concurrency 128 excluded
+streaming,50,0.00000,0.04296,-0.03935,8,0,800 RPS and concurrency 128 excluded
+streaming,100,0.00000,0.07900,0.18079,8,0,800 RPS and concurrency 128 excluded
