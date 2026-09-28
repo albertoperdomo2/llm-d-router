@@ -2,6 +2,8 @@
 
 This directory contains the deployment definitions, native GuideLLM commands,
 Prometheus queries, raw data, and pprof artifacts used by the study.
+The study decision and conclusions are in the
+[`EPP tracing overhead analysis`](../epp_tracing_overhead_analysis.md).
 
 ## Software versions
 

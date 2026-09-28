@@ -1,13 +1,23 @@
 # EPP tracing overhead analysis
 
-## Decision
+## Decision and conclusions
 
-This study keeps 10% as the sampling ratio when standard EPP tracing is enabled. We keep
-tracing disabled unless an OTLP collector is configured. Every measured run
-used a collector, so this study does not support enabling tracing by default
-with the chart's localhost exporter endpoint. A 100% ratio is useful for
-diagnosis, but it consumes measurable EPP CPU and increases EPP-internal tail
-latency.
+1. Across the clean, regular workloads, enabling standard EPP tracing produced
+   no major end-to-end throughput or latency impact. This result supports using
+   a 10% sampling ratio when tracing is enabled.
+2. Tracing is not free at high sampling ratios. At 100% sampling, tracing frames
+   accounted for 3.15% to 4.36% of sampled EPP CPU, and EPP-internal scheduler
+   p99 increased in both focused workloads. A 100% ratio is appropriate for
+   diagnosis rather than routine operation.
+3. The 800 requests/s and concurrency-128 stages are corner cases in this data.
+   They failed at every tracing ratio, including tracing off, because the load
+   generator reached its connection limit. They do not show a tracing-specific
+   regression, and tracing impact under sustained extreme concurrency requires
+   a separate clean measurement.
+
+Keep tracing disabled unless an OTLP collector is configured. Every measured
+run used a collector, so this study does not support enabling tracing by
+default with the chart's localhost exporter endpoint.
 
 ## Primary experiment
 
