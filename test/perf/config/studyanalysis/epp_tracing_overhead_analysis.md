@@ -2,7 +2,7 @@
 
 ## Decision
 
-Keep 10% as the sampling ratio when standard EPP tracing is enabled. Keep
+This study keeps 10% as the sampling ratio when standard EPP tracing is enabled. We keep
 tracing disabled unless an OTLP collector is configured. Every measured run
 used a collector, so this study does not support enabling tracing by default
 with the chart's localhost exporter endpoint. A 100% ratio is useful for
