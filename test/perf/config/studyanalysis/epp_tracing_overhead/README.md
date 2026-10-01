@@ -1,7 +1,7 @@
 # Reproducing the EPP tracing overhead study
 
 This directory contains the deployment definitions, native GuideLLM commands,
-Prometheus queries, raw data, and pprof artifacts used by the study.
+Prometheus queries, and pprof collection script used by the study.
 The study decision and conclusions are in the
 [`EPP tracing overhead analysis`](../epp_tracing_overhead_analysis.md).
 
@@ -90,6 +90,3 @@ For each run, we verify that:
 5. Prometheus returned EPP CPU and memory samples
 6. A profiling run captured non-empty CPU and heap profiles from every ready
    EPP replica
-
-The measured values and run IDs are in [`data`](data). Run IDs provide an audit
-key without embedding a tracking-server address.

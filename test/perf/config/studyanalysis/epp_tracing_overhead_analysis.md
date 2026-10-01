@@ -90,14 +90,12 @@ scheduler p99 increased from 125.18 to 187.11 microseconds. The non-monotonic
 intermediate ratios and single run per cell limit comparison of smaller
 changes. The CPU-throttling query returned no series for all eight runs, so
 throttling was not measured as zero and cannot be assessed from this cohort.
-The full p50, p95, and p99 values are in
-[`fixed_400_epp_internal_metrics.csv`](epp_tracing_overhead/data/fixed_400_epp_internal_metrics.csv).
 
 ## CPU profile attribution
 
 Both 100% diagnostic runs captured every ready EPP replica successfully. The
-raw profiles and capture metadata are in
-[`epp_tracing_overhead/pprof`](epp_tracing_overhead/pprof).
+[pprof instructions](epp_tracing_overhead/pprof) describe how to collect and
+inspect profiles during a diagnostic run.
 
 | Target | Profile samples | Tracer handle lookup cumulative CPU | Batch processor cumulative CPU | Exporter cumulative CPU | Samples with any tracing frame |
 |---|---:|---:|---:|---:|---:|
@@ -148,13 +146,8 @@ treated as effect estimates. The EPP-internal latency and CPU profiles establish
 that tracing executes measurable work. Three matched repetitions of the fixed
 matrix are required to estimate its request-level effect with confidence.
 
-## Reproduction and data
+## Reproduction
 
 Native Kubernetes and Helm deployment definitions, GuideLLM commands, pprof
 collection, and Prometheus queries are stored in
-[`epp_tracing_overhead`](epp_tracing_overhead). The measured values, cohort
-registry, accepted replacements, and exclusions are stored in
-[`epp_tracing_overhead/data`](epp_tracing_overhead/data). The registry contains
-MLflow run IDs for auditability but no server links. The
-[`evidence inventory`](epp_tracing_overhead/data/evidence_inventory.md) records
-which benchmark cohorts contribute to the decision.
+[`epp_tracing_overhead`](epp_tracing_overhead).

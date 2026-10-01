@@ -1,33 +1,29 @@
-# EPP pprof artifacts
+# Collecting EPP profiles
 
-The `simulator` and `live` directories contain the raw CPU and heap profiles,
-per-pod `capture.json`, and run-level `capture-summary.json` from the 100%
-sampling diagnostic runs. Each capture covered the only ready EPP replica for
-30 seconds and completed successfully. `SHA256SUMS` records the raw profile
-checksums.
+Enable the [`pprof values`](../deployments/tracing/pprof.values.yaml) for the
+diagnostic run described in the [study instructions](../README.md). Run the
+collection script while GuideLLM is generating load:
+
+```sh
+NAMESPACE=epp-tracing-overhead OUTPUT_DIR=/tmp/epp-pprof ./collect.sh
+```
+
+The script writes a 30-second CPU profile and a heap profile to one directory
+per EPP pod under `OUTPUT_DIR`.
 
 The profiles can be inspected with the pprof version pinned by llm-d-router:
 
 ```sh
-go run github.com/google/pprof@v0.0.0-20260402051712-545e8a4df936 -top simulator/cpu.pprof
-go run github.com/google/pprof@v0.0.0-20260402051712-545e8a4df936 -top live/cpu.pprof
+PROFILE=/tmp/epp-pprof/EPP_POD_NAME/cpu.pprof
+go run github.com/google/pprof@v0.0.0-20260402051712-545e8a4df936 -top "$PROFILE"
 ```
 
-For the simulator profile, 1.17 of 26.81 sampled CPU-seconds, or 4.36%, had at
-least one router tracing or OpenTelemetry frame on the stack. The tracer handle
-lookup had 0.28 cumulative CPU-seconds, the batch processor had 0.40, and the
-exporter had 0.36.
-
-For the live profile, 1.16 of 36.80 sampled CPU-seconds, or 3.15%, matched the
-same filter. The tracer handle lookup had 0.35 cumulative CPU-seconds, the batch
-processor had 0.48, and the exporter had 0.40.
-
-The union measurement can be reproduced with:
+To select samples with at least one router tracing or OpenTelemetry frame:
 
 ```sh
 go tool pprof -top \
   -focus='go.opentelemetry.io/otel|pkg/common/observability/tracing' \
-  simulator/cpu.pprof
+  "$PROFILE"
 ```
 
 The union counts each matching sample once. The individual function values are
