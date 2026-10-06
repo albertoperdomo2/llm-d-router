@@ -39,6 +39,7 @@ import (
 	sourcenotifications "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/source/notifications"
 	preciseproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache"
 	parserutil "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/util"
+	"github.com/llm-d/llm-d-router/pkg/kvcache"
 )
 
 const (
@@ -47,7 +48,6 @@ const (
 
 	fieldMaxLoadTokens    = "max_load_tokens"
 	fieldMaxOffloadTokens = "max_offload_tokens"
-	gpuTierKey            = "gpu"
 
 	waitingQueueEWMAHalfLife = 2 * time.Second
 	waitingQueueReopenRatio  = 0.5
@@ -400,10 +400,10 @@ func (p *Plugin) externalReusableTokens(endpoint scheduling.Endpoint) (int, bool
 		return 0, false
 	}
 
-	gpuBlocks := byTier[gpuTierKey]
+	gpuBlocks := byTier[kvcache.GPUTier]
 	maxExternalBlocks := 0
 	for tier, blocks := range byTier {
-		if tier == gpuTierKey || tier == attrprefix.SpeculativeTierKey {
+		if tier == kvcache.GPUTier || tier == attrprefix.SpeculativeTierKey {
 			continue
 		}
 		maxExternalBlocks = max(maxExternalBlocks, blocks)
