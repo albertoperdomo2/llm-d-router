@@ -10,6 +10,10 @@ This Alpha plugin uses a deployment-specific reusable-token threshold. It can al
 
 The load control depends on [vLLM PR #55885](https://github.com/vllm-project/vllm/pull/55885) or a vLLM build with equivalent behavior. That API defines `kv_transfer_params.max_load_tokens: 0` as disabling external loads from the CPU primary tier and every secondary tier while preserving local GPU prefix-cache reuse and the independent store path. Omitting `max_load_tokens` preserves uncapped external loading.
 
+The minimum vLLM release that honors `max_load_tokens` is v0.31.0. v0.30.0 and earlier releases do not include the change.
+
+Engines older than v0.31.0 accept the request and ignore `max_load_tokens` without an error or a warning, so external loading stays uncapped. The `disable` load policy and the `threshold` load policy have no effect on those engines, while the EPP logs still report the load as disabled. The offload policy does not depend on this change: vLLM v0.29.0 and v0.30.0 honor `max_offload_tokens`.
+
 ## Configuration
 
 Because the plugin is Alpha, the EPP process must include `--allow-experimental-plugins`. EPP initialization fails if the configuration contains this plugin without the flag.
